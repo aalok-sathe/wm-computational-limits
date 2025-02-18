@@ -1,11 +1,17 @@
 [project]
-name = "wm-computational-limits"
+name = "wm_limits"
 version = "0.1.0"
-description = "Add your description here"
+description = "Investigating the nature of working memory limitations using computational modeling."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "numpy>=2.0.2",
     "torch>=2.6.0",
+    "transformer-lens>=2.11.0",
     "transformers>=4.48.3",
+]
+
+[dependency-groups]
+dev = [
+    "pdoc>=15.0.1",
 ]
