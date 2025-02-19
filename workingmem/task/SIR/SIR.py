@@ -6,6 +6,7 @@ This file houses classes and functions for the Store-Ignore-Recall (SIR) task
 import typing
 from pathlib import Path
 import yaml
+import logging
 
 # packages
 from tokenizers import Tokenizer, Encoding
@@ -15,6 +16,9 @@ import numpy as np
 
 # local
 from workingmem.task.interface import GeneratedCachedDataset
+
+
+logger = logging.getLogger(__name__)
 
 
 # Create a custom tokenizer class by extending PreTrainedTokenizerFast
@@ -129,14 +133,10 @@ class SIRDataset(GeneratedCachedDataset):
             split=split,
         )
 
-    def __getitem__(self, idx): ...
+    def __getitem__(self, idx):
+        logger.debug(f"__getitem__ called for index {idx}")
+        return NotImplemented
 
-
-def main(): ...
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    main()
+    def generate(self):
+        logger.info("generating data for SIR task")
+        return NotImplemented

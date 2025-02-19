@@ -39,11 +39,11 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
 
     @abstractmethod
     def __getitem__(self, index):
-        pass
+        return NotImplemented
 
     @abstractmethod
     def generate(self):
-        pass
+        return NotImplemented
 
     @classmethod
     def from_path(
