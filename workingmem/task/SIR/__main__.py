@@ -56,19 +56,19 @@ if __name__ == "__main__":
         "--heldout_reg",
         type=int,
         default=20,
-        help="Held-out registers for testing.",
+        help="Held-out registers for testing. [20]",
     )
     parser.add_argument(
         "--heldout_items",
         type=int,
         default=20,
-        help="Held-out items for testing.",
+        help="Held-out items for testing. [20]",
     )
     parser.add_argument(
         "--locality",
         type=int,
         default=10,
-        help="Locality for the tasks.",
+        help="Locality of registers to draw from (concurrent regs always within +=L of each other). [10]",
     )
     parser.add_argument(
         "--ignore_prob",
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--seed",
         type=int,
-        default=42,
+        default=None,
         help="random seed for dataset generation",
     )
     parser.add_argument(

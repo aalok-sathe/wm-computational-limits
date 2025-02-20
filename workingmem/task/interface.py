@@ -163,7 +163,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         worry about it.
         to simplify things, the caller will treat it as a collection implementing __len__.
 
-        uses random seed (self.seed) to ensure reproducibility.
+        uses random seed (self.seed) if supplied to ensure reproducibility.
 
         Returns:
         ---
