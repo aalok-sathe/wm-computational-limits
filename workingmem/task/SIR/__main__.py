@@ -11,7 +11,7 @@ def main(args):
     tokenizer = SIRTokenizer.from_params(args.n_reg, args.n_items)
     trial_seq = dataset.generate_trial_sequence()
     print(trial_seq)
-    print(tokenizer.encode(trial_seq).ids)
+    print(tokenizer.encode(trial_seq["sequence"]).ids)
 
 
 if __name__ == "__main__":
