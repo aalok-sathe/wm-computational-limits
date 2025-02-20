@@ -10,7 +10,7 @@ def main(args):
     dataset = SIRDataset(**vars(args))
     tokenizer = SIRTokenizer.from_params(args.n_reg, args.n_items)
     print(dataset[0])
-    print(tokenizer(dataset[0]))
+    print(tokenizer.encode(dataset[0]).ids)
 
 
 if __name__ == "__main__":

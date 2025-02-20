@@ -43,19 +43,21 @@ class SIRTokenizer:
     ) -> tokenizers.Tokenizer:
         # token_to_id
         vocab = {
-            "store": 0,
-            "ignore": 1,
-            "recall": 2,
-            "same": 3,
-            "diff": 4,
-            **{f"reg_{i}": i + 5 for i in range(n_reg)},
-            **{f"item_{i}": i + 5 + n_reg for i in range(n_items)},
+            "UNK": 0,
+            "St": 1,
+            "Ig": 2,
+            "Re": 3,
+            "same": 7,
+            "diff": 8,
+            **{f"r_{i}": 100 + i for i in range(n_reg)},
+            **{f"i_{i}": 100 + i + n_reg for i in range(n_items)},
         }
         # id_to_token = {i: token for token, i in vocab.items()}
 
         tokenizer = tokenizers.Tokenizer(
-            tokenizers.models.WordLevel(vocab), *args, **kwargs
+            tokenizers.models.WordLevel(vocab, unk_token="UNK"), *args, **kwargs
         )
+        tokenizer.pre_tokenizer = tokenizers.pre_tokenizers.Whitespace()
 
         return tokenizer
 
@@ -166,6 +168,6 @@ class SIRDataset(GeneratedCachedDataset):
         np.random.seed(self.seed)
         random.seed(self.seed)
 
-        return [
-            "store reg0 item0 diff ignore reg1 item1 diff store reg1 item3 diff ignore reg0 item0 same"
-        ] * (self.attrs["n_train"] + self.attrs["n_val"] + self.attrs["n_test"])
+        return ["St r_0 i_0 diff Ig r_1 i_1 diff St r_1 i_3 diff Ig r_0 i_0 same"] * (
+            self.attrs["n_train"] + self.attrs["n_val"] + self.attrs["n_test"]
+        )
