@@ -11,6 +11,7 @@ import random
 # packages
 import tokenizers
 import numpy as np
+import torch
 from tqdm.auto import tqdm
 
 # local
@@ -41,6 +42,12 @@ class SIRTokenizer:
 
     @dataclass
     class labels:
+        """
+        this class could be used to create a loss mask, if the structure of each
+        individual trial were variable. else, we could just use the positions to
+        create the mask in the case of the SIR task.
+        """
+
         same = "same"
         diff = "diff"
 
@@ -100,6 +107,7 @@ class SIRDataset(GeneratedCachedDataset):
     """
 
     data: SupportsGetitem
+    trial_label_mask: tuple = (0, 0, 0, 1)
 
     def __init__(
         self,
@@ -216,14 +224,18 @@ class SIRDataset(GeneratedCachedDataset):
             generate=generate,
         )
 
-    def __getitem__(self, idx) -> typing.Sequence[str]:
+    # def __getitem__(self, idx) -> typing.Sequence[str]:
+    def __getitem__(self, idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
         logger.debug(f"__getitem__ called for index {idx}")
         # since our data supports __getitem__ (for now) we can index into it
+        sequence = torch.LongTensor(self.data[idx]["sequence"])
+        answer_locations = torch.LongTensor(self.data[idx]["answer_locations"])
+        return {"tokens": sequence, "answer_locations": answer_locations}
         return self.data[idx]
 
     def generate_trial_sequence(
         self,
-    ) -> str:
+    ) -> dict:
         """
         Generates a sequence of `seq_len` trials for the SIR task
 
@@ -286,10 +298,10 @@ class SIRDataset(GeneratedCachedDataset):
 
         # sample w/o replacement
         # regs_chosen now contains the indexes of the registers to use
-        regs_chosen: typing.Collection[int] = np.random.choice(
+        regs_chosen: np.ndarray[int] = np.random.choice(
             reg_range, self.attrs["concurrent_reg"], replace=False
         )
-        items_chosen: typing.Collection[int] = np.random.choice(
+        items_chosen: np.ndarray[int] = np.random.choice(
             # WLG, heldout items are numerically at the end of the item pool, and
             # so far we aren't doing anything like locality or wraparound with them
             # so this hunk is simpler
@@ -345,7 +357,20 @@ class SIRDataset(GeneratedCachedDataset):
                 # doesn't matter if it's the same or a new item
                 reg_state[this_reg_idx] = this_item
 
-        return " ".join(this_trial_seq)
+        return {
+            "sequence": " ".join(this_trial_seq),
+            "regs_used": regs_chosen.tolist(),
+            "items_used": items_chosen.tolist(),
+            "locality": self.attrs["locality"],
+        }
+
+    @property
+    def answer_locations(self):
+        """
+        returns the locations of the "answers" in the sequence where loss should be computed (the only deterministic/structured)
+        part of the SIR task.
+        """
+        return SIRDataset.trial_label_mask * self.attrs["seq_len"]
 
     def generate(self) -> typing.Collection[typing.Sequence[str]]:
         """
