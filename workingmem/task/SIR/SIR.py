@@ -3,6 +3,7 @@ This file houses classes and functions for the Store-Ignore-Recall (SIR) task
 """
 
 # stdlib
+from dataclasses import dataclass
 import typing
 from pathlib import Path
 import yaml
@@ -34,29 +35,62 @@ class SIRTokenizer:
 
     template = "{instr} {reg} {item} {samediff} "
     query = "{instr} {reg} {item} "
-    instructions = ("store", "ignore")
-    labels = ("same", "diff")
+
+    @dataclass
+    class instructions:
+        store = "St"
+        ignore = "Ig"
+        recall = "Re"
+
+    @dataclass
+    class labels:
+        same = "same"
+        diff = "diff"
+
+    @dataclass
+    class symbols:
+        register: typing.Callable = lambda i: f"reg_{i}"
+        item: typing.Callable = lambda i: f"item_{i}"
 
     @classmethod
     def from_params(
-        cls, n_reg: int, n_items: int, *args, **kwargs
+        cls,
+        n_reg: int,
+        n_items: int,
+        *args,
+        **kwargs,
     ) -> tokenizers.Tokenizer:
         # token_to_id
+
+        # dataclasses that have default instantiations represent text-form of symbols such
+        # as instructions, labels, register identifiers and item identifiers
+
+        # we define the vocabulary here with maximally identifiable token_ids:
+        # 0-10 represents special symbols
+        # 100-n_reg represents registers
+        # 300(ish)-n_items represents items. typically, n_reg<=300 so n_items can start at 300
+        #   (see highlighted line below)
+        #   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         vocab = {
-            "UNK": 0,
-            "St": 1,
-            "Ig": 2,
-            "Re": 3,
-            "same": 7,
-            "diff": 8,
-            **{f"r_{i}": 100 + i for i in range(n_reg)},
-            **{f"i_{i}": 100 + i + n_reg for i in range(n_items)},
+            "UNK": 0,  # it is problematic if this is ever used
+            cls.instructions.store: 1,
+            cls.instructions.ignore: 2,
+            cls.instructions.recall: 3,
+            cls.labels.same: 7,
+            cls.labels.diff: 8,
+            **{cls.symbols.register(i): 100 + i for i in range(n_reg)},
+            **{
+                cls.symbols.item(i): max(300, 100 + n_reg) + i
+                #                    ^^^^^^^^^^^^^^^^^^^^^
+                for i in range(n_items)
+            },
         }
         # id_to_token = {i: token for token, i in vocab.items()}
 
         tokenizer = tokenizers.Tokenizer(
             tokenizers.models.WordLevel(vocab, unk_token="UNK"), *args, **kwargs
         )
+        # we want to tokenize on whitespace so that whitespace is ignored fully
         tokenizer.pre_tokenizer = tokenizers.pre_tokenizers.Whitespace()
 
         return tokenizer
@@ -75,11 +109,14 @@ class SIRDataset(GeneratedCachedDataset):
         n_reg: int = 100,
         n_items: int = 100,
         seq_len: int = 100,
-        concurrent_reg: int = 2,
+        concurrent_regs: int = 2,
         heldout_reg: int = 20,
         heldout_items: int = 20,
         locality: typing.Union[int, None] = 10,
         ignore_prob: float = 0.3,
+        same_diff_prob: float = 0.4,
+        #
+        seed=42,
         #
         n_train: int = 100_000,
         n_val: int = 2_000,
@@ -103,7 +140,7 @@ class SIRDataset(GeneratedCachedDataset):
                 total number of items in vocab to draw from.  defaults to 100.
             seq_len (int):
                 length of a trial sequence. defaults to 100.
-            concurrent_reg (int):
+            concurrent_regs (int):
                 number of registers to use concurrently within a trial.  default: 2. other instances
                 of the experiment will change this parameter upwards to 3, 4, etc.
             heldout_reg (int):
@@ -120,6 +157,9 @@ class SIRDataset(GeneratedCachedDataset):
                 defaults to 10.
             ignore_prob (float):
                 probability of an ignore instruction. defaults to 0.3.
+            same_diff_prob (float):
+                probability of a 'same' outcome on a particular register. varies independently of
+                store/ignore instruction. defaults to 0.4.
 
             n_train (int):
                 number of training trials to generate. defaults to 10,000.
@@ -137,21 +177,28 @@ class SIRDataset(GeneratedCachedDataset):
             basedir (str):
                 the base directory to store the dataset in.
         """
+        self.tokenizer = SIRTokenizer.from_params(n_reg, n_items)
+
         # calling super() with kwargs stores these things in self.attrs
         super().__init__(
             # the first set of kwargs makes it into the `self.attrs` dict
+            # and largely determines the nature of the dataset
             n_reg=n_reg,
             n_items=n_items,
             seq_len=seq_len,
-            concurrent_reg=concurrent_reg,
+            concurrent_regs=concurrent_regs,
             heldout_reg=heldout_reg,
             heldout_items=heldout_items,
             locality=locality,
             ignore_prob=ignore_prob,
+            same_diff_prob=same_diff_prob,
+            # random seed
+            seed=seed,
+            # specify sizes of splits
             n_train=n_train,
             n_val=n_val,
             n_test=n_test,
-            # the second two are used in the init
+            # the next set of kwargs are used in the init but not recorded in attrs
             basedir=basedir,
             split=split,
         )
@@ -168,6 +215,37 @@ class SIRDataset(GeneratedCachedDataset):
         np.random.seed(self.seed)
         random.seed(self.seed)
 
-        return ["St r_0 i_0 diff Ig r_1 i_1 diff St r_1 i_3 diff Ig r_0 i_0 same"] * (
+        store = SIRTokenizer.instructions.store
+        ignore = SIRTokenizer.instructions.ignore
+        # recall = self.tokenizer.instructions.recall
+        same = SIRTokenizer.labels.same
+        diff = SIRTokenizer.labels.diff
+        reg = SIRTokenizer.symbols.register
+        item = SIRTokenizer.symbols.item
+
+        # key things to remember:
+        # 1. we have n_reg registers and n_items items in total, but not all of them are
+        #    used in every trial. only concurrent_reg are used.
+
+        # dummy
+        dummy = (
+            store,
+            reg(0),
+            item(0),
+            diff,
+            ignore,
+            reg(1),
+            item(1),
+            diff,
+            store,
+            reg(1),
+            item(3),
+            diff,
+            ignore,
+            reg(0),
+            item(0),
+            same,
+        )
+        return [" ".join(dummy)] * (
             self.attrs["n_train"] + self.attrs["n_val"] + self.attrs["n_test"]
         )

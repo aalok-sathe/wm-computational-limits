@@ -40,7 +40,7 @@ if __name__ == "__main__":
         help="Sequence length.",
     )
     parser.add_argument(
-        "--concurrent_reg",
+        "--concurrent_regs",
         type=int,
         default=2,
         help="Number of concurrent registers.",
@@ -68,6 +68,12 @@ if __name__ == "__main__":
         type=float,
         default=0.3,
         help="Probability of ignoring an item.",
+    )
+    parser.add_argument(
+        "--same_diff_prob",
+        type=float,
+        default=0.4,
+        help="Probability of 'same' outcome",
     )
     parser.add_argument(
         "--n_train",
@@ -98,6 +104,12 @@ if __name__ == "__main__":
         type=str,
         default="datasets",
         help="Base directory to save or load data.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="random seed for dataset generation",
     )
 
     args = parser.parse_args()

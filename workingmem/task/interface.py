@@ -32,7 +32,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
     _hash_length = 6
     attrs: dict
 
-    def __init__(self, basedir="datasets", split=None, seed=42, **kwargs):
+    def __init__(self, basedir="datasets", split=None, seed=None, **kwargs):
         self.attrs = dict(seed=seed, **kwargs)
         self.seed = seed
         self.split = split
