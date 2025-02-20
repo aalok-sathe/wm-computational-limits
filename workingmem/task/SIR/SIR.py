@@ -7,39 +7,57 @@ import typing
 from pathlib import Path
 import yaml
 import logging
+import random
 
 # packages
-from tokenizers import Tokenizer, Encoding
+import tokenizers
 import torch
 from transformers import PreTrainedTokenizerFast
 import numpy as np
 
 # local
-from workingmem.task.interface import GeneratedCachedDataset
+from workingmem.task.interface import GeneratedCachedDataset, SupportsGetitem
 
 
 logger = logging.getLogger(__name__)
 
 
 # Create a custom tokenizer class by extending PreTrainedTokenizerFast
-class SIRTokenizer(PreTrainedTokenizerFast):
+
+
+class SIRTokenizer:
     """
     taken from: https://discuss.huggingface.co/t/creating-a-custom-token-vocabulary-for-gpt-2/134522
+    spaces act as a delimiter! spaces are just for human readability, and do not matter for the actual
+    tokens.
     """
 
-    def __init__(self, vocab: dict):
-        super().__init__()
-        self.vocab = vocab
-        self.id_to_token = {i: token for token, i in vocab.items()}
-        self.token_to_id = vocab
+    template = "{instr} {reg} {item} {samediff} "
+    query = "{instr} {reg} {item} "
+    instructions = ("store", "ignore")
+    labels = ("same", "diff")
 
-    # def encode(self, text, add_special_tokens=True):
-    #     # Implement custom encoding logic
-    #     return [self.token_to_id.get(token, self.token_to_id.get('<unk>', 0)) for token in text.split()]
+    @classmethod
+    def from_params(
+        cls, n_reg: int, n_items: int, *args, **kwargs
+    ) -> tokenizers.Tokenizer:
+        # token_to_id
+        vocab = {
+            "store": 0,
+            "ignore": 1,
+            "recall": 2,
+            "same": 3,
+            "diff": 4,
+            **{f"reg_{i}": i + 5 for i in range(n_reg)},
+            **{f"item_{i}": i + 5 + n_reg for i in range(n_items)},
+        }
+        # id_to_token = {i: token for token, i in vocab.items()}
 
-    # def decode(self, tokens, skip_special_tokens=False):
-    #     # Implement custom decoding logic
-    #     return ''.join([self.id_to_token.get(token_id, '<unk>') for token_id in tokens])
+        tokenizer = tokenizers.Tokenizer(
+            tokenizers.models.WordLevel(vocab), *args, **kwargs
+        )
+
+        return tokenizer
 
 
 class SIRDataset(GeneratedCachedDataset):
@@ -47,6 +65,8 @@ class SIRDataset(GeneratedCachedDataset):
     dataset instance for the SIR task that inherits methods for caching and loading from
     disk
     """
+
+    data: SupportsGetitem
 
     def __init__(
         self,
@@ -59,7 +79,7 @@ class SIRDataset(GeneratedCachedDataset):
         locality: typing.Union[int, None] = 10,
         ignore_prob: float = 0.3,
         #
-        n_train: int = 10_000,
+        n_train: int = 100_000,
         n_val: int = 2_000,
         n_test: int = 2_000,
         #
@@ -117,6 +137,7 @@ class SIRDataset(GeneratedCachedDataset):
         """
         # calling super() with kwargs stores these things in self.attrs
         super().__init__(
+            # the first set of kwargs makes it into the `self.attrs` dict
             n_reg=n_reg,
             n_items=n_items,
             seq_len=seq_len,
@@ -128,15 +149,23 @@ class SIRDataset(GeneratedCachedDataset):
             n_train=n_train,
             n_val=n_val,
             n_test=n_test,
-            #
+            # the second two are used in the init
             basedir=basedir,
             split=split,
         )
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> typing.Sequence[str]:
         logger.debug(f"__getitem__ called for index {idx}")
-        return NotImplemented
+        # since our data supports __getitem__ (for now) we can index into it
+        return self.data[idx]
 
-    def generate(self):
+    def generate(self) -> typing.Collection[typing.Sequence[str]]:
         logger.info("generating data for SIR task")
-        return NotImplemented
+
+        # seed the random number generator
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+
+        return [
+            "store reg0 item0 diff ignore reg1 item1 diff store reg1 item3 diff ignore reg0 item0 same"
+        ] * (self.attrs["n_train"] + self.attrs["n_val"] + self.attrs["n_test"])

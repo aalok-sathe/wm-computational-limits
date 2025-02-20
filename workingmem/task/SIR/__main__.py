@@ -1,10 +1,16 @@
-from workingmem.task.SIR import SIRDataset
+from workingmem.task.SIR import SIRDataset, SIRTokenizer
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def main(args):
     # make a call to SIRDataset with the arguments from the command line
     dataset = SIRDataset(**vars(args))
+    tokenizer = SIRTokenizer.from_params(args.n_reg, args.n_items)
     print(dataset[0])
+    print(tokenizer(dataset[0]))
 
 
 if __name__ == "__main__":
