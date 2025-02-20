@@ -107,14 +107,14 @@ class SIRDataset(GeneratedCachedDataset):
         n_items: int = 100,
         seq_len: int = 100,
         concurrent_reg: int = 2,
-        concurrent_items: int = 4,
+        concurrent_items: int = 5,
         heldout_reg: int = 20,
         heldout_items: int = 20,
         locality: typing.Union[int, None] = 10,
         ignore_prob: float = 0.3,
         same_diff_prob: float = 0.5,
         #
-        seed=42,
+        seed=None,
         #
         n_train: int = 100_000,
         n_val: int = 2_000,
@@ -158,6 +158,9 @@ class SIRDataset(GeneratedCachedDataset):
                 trial sequence as register_{i \pm locality}.  this allows us to break the locality
                 constraint at test time to see out-of-locality-distribution generalization.
                 defaults to 10.
+                TODO: option to manipulate locality of train/test split. alternatively, we could
+                do this evaluation using a separate dataset with the locality parameter relaxed
+                (which should make the test data OOD)
             ignore_prob (float):
                 probability of an ignore instruction. defaults to 0.3.
             same_diff_prob (float):
@@ -181,8 +184,9 @@ class SIRDataset(GeneratedCachedDataset):
                 the base directory to store the dataset in.
         """
         # seed the random number generator
-        np.random.seed(seed)
-        random.seed(seed)
+        if seed is not None:
+            np.random.seed(seed)
+            random.seed(seed)
 
         self.tokenizer = SIRTokenizer.from_params(n_reg, n_items)
 
@@ -238,7 +242,7 @@ class SIRDataset(GeneratedCachedDataset):
            wraparound, and picking registers uniformly without replacement from this range
 
         algorithm
-          1. pick a start_idx uniformly from the range [0, n_reg)
+          1. pick a start_idx uniformly from the range [0, n_reg) [oops we forgot about the heldout regs]
           2. choose concurrent_reg registers from the range [start_idx, start_idx + (locality or n_reg)) % n_reg
              and likewise choose concurrent_items items from the range [0, n_items)
         +-------- (repeat for seq_len steps) ----------------------------+
@@ -246,6 +250,7 @@ class SIRDataset(GeneratedCachedDataset):
         | 4. pick an instruction using ignore_prob                       |
         | 5. pick an item using same_diff_prob, unless there was no      |
         |     previous item (note that 4 & 5 are independent)            |
+        |     [oops, we forgot about the heldout items]                  |
         | 6. update the register with the item if the instruction is     |
         |     not ignore                                                 |
         +----------------------------------------------------------------+
@@ -267,14 +272,17 @@ class SIRDataset(GeneratedCachedDataset):
         assert self.attrs["locality"] >= self.attrs["concurrent_reg"], (
             f"locality must be at least the number of concurrent registers to use. you supplied: {self.attrs['locality']} < {self.attrs['concurrent_reg']}"
         )
-        reg_range = (
-            np.arange(
-                start_idx,
-                start_idx + (self.attrs["locality"] or self.attrs["n_reg"]),
-                dtype=int,
-            )
-            % self.attrs["n_reg"]
-        )
+        reg_range = np.arange(
+            start_idx,
+            start_idx
+            + (
+                self.attrs["locality"]
+                # WLG, heldout registers are numerically at the end of the reg pool
+                or (self.attrs["n_reg"] - self.attrs["heldout_reg"])
+            ),
+            dtype=int,
+            # this way, we wraparound at the end of the available (non-held-out) register pool
+        ) % (self.attrs["n_reg"] - self.attrs["heldout_reg"])
 
         # sample w/o replacement
         # regs_chosen now contains the indexes of the registers to use
@@ -282,7 +290,10 @@ class SIRDataset(GeneratedCachedDataset):
             reg_range, self.attrs["concurrent_reg"], replace=False
         )
         items_chosen: typing.Collection[int] = np.random.choice(
-            np.arange(self.attrs["n_items"]),
+            # WLG, heldout items are numerically at the end of the item pool, and
+            # so far we aren't doing anything like locality or wraparound with them
+            # so this hunk is simpler
+            np.arange(self.attrs["n_items"] - self.attrs["heldout_items"]),
             self.attrs["concurrent_items"],
             replace=False,
         )
@@ -344,8 +355,9 @@ class SIRDataset(GeneratedCachedDataset):
         logger.info("generating data for SIR task")
 
         # seed the random number generator
-        np.random.seed(self.seed)
-        random.seed(self.seed)
+        if self.seed is not None:
+            np.random.seed(self.seed)
+            random.seed(self.seed)
 
         examples = set()
 

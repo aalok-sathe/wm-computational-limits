@@ -49,7 +49,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--concurrent_items",
         type=int,
-        default=4,
+        default=5,
         help="Number of concurrent items. [4]",
     )
     parser.add_argument(
