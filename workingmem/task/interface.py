@@ -3,7 +3,6 @@ import typing
 from pathlib import Path
 import numpy as np
 import yaml
-from types import SimpleNamespace
 from hashlib import sha1
 import logging
 
@@ -148,10 +147,11 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         # this behavior is both, dataset, and split, dependent
         return NotImplemented
 
-    @abstractmethod
     def generate_trial_sequence(self):
         """
         generates a single trial sequence for the task. this is a single example.
+        not a necessary method to implement for a subclass---a subclass may choose
+        to do something else in `generate` instead of calling this method.
         """
         NotImplemented
 

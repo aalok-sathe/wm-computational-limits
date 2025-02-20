@@ -5,15 +5,11 @@ This file houses classes and functions for the Store-Ignore-Recall (SIR) task
 # stdlib
 from dataclasses import dataclass
 import typing
-from pathlib import Path
-import yaml
 import logging
 import random
 
 # packages
 import tokenizers
-import torch
-from transformers import PreTrainedTokenizerFast
 import numpy as np
 from tqdm.auto import tqdm
 
@@ -126,6 +122,7 @@ class SIRDataset(GeneratedCachedDataset):
         #
         split="train",
         basedir="datasets",
+        generate=True,
     ):
         """
         Class representing an instance of a dataset for the SIR task.
@@ -183,6 +180,10 @@ class SIRDataset(GeneratedCachedDataset):
             basedir (str):
                 the base directory to store the dataset in.
         """
+        # seed the random number generator
+        np.random.seed(seed)
+        random.seed(seed)
+
         self.tokenizer = SIRTokenizer.from_params(n_reg, n_items)
 
         # calling super() with kwargs stores these things in self.attrs
@@ -208,6 +209,7 @@ class SIRDataset(GeneratedCachedDataset):
             # the next set of kwargs are used in the init but not recorded in attrs
             basedir=basedir,
             split=split,
+            generate=generate,
         )
 
     def __getitem__(self, idx) -> typing.Sequence[str]:

@@ -9,8 +9,9 @@ def main(args):
     # make a call to SIRDataset with the arguments from the command line
     dataset = SIRDataset(**vars(args))
     tokenizer = SIRTokenizer.from_params(args.n_reg, args.n_items)
-    print(dataset[0])
-    print(tokenizer.encode(dataset[0]).ids)
+    trial_seq = dataset.generate_trial_sequence()
+    print(trial_seq)
+    print(tokenizer.encode(trial_seq).ids)
 
 
 if __name__ == "__main__":
@@ -116,6 +117,12 @@ if __name__ == "__main__":
         type=int,
         default=42,
         help="random seed for dataset generation",
+    )
+    parser.add_argument(
+        "--generate",
+        action="store_true",
+        help="generate the dataset splits and store to disk? if not passed, "
+        "will simply output a single example generated on-the-fly.",
     )
 
     args = parser.parse_args()
