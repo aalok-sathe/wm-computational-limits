@@ -25,25 +25,31 @@ if __name__ == "__main__":
         "--n_reg",
         type=int,
         default=100,
-        help="Number of registers.",
+        help="Number of registers (vocab). [100]",
     )
     parser.add_argument(
         "--n_items",
         type=int,
         default=100,
-        help="Number of items.",
+        help="Number of items (vocab). [100]",
     )
     parser.add_argument(
         "--seq_len",
         type=int,
         default=100,
-        help="Sequence length.",
+        help="Sequence length (trials in a sequence). [100]",
     )
     parser.add_argument(
-        "--concurrent_regs",
+        "--concurrent_reg",
         type=int,
         default=2,
-        help="Number of concurrent registers.",
+        help="Number of concurrent registers. [2]",
+    )
+    parser.add_argument(
+        "--concurrent_items",
+        type=int,
+        default=4,
+        help="Number of concurrent items. [4]",
     )
     parser.add_argument(
         "--heldout_reg",
@@ -72,26 +78,26 @@ if __name__ == "__main__":
     parser.add_argument(
         "--same_diff_prob",
         type=float,
-        default=0.4,
-        help="Probability of 'same' outcome",
+        default=0.5,
+        help="Probability of 'same' outcome [.5]",
     )
     parser.add_argument(
         "--n_train",
         type=int,
-        default=10000,
-        help="Number of training samples.",
+        default=10_000,
+        help="Number of training samples. [10,000]",
     )
     parser.add_argument(
         "--n_val",
         type=int,
         default=2000,
-        help="Number of validation samples.",
+        help="Number of validation samples. [2000]",
     )
     parser.add_argument(
         "--n_test",
         type=int,
         default=2000,
-        help="Number of test samples.",
+        help="Number of test samples. [2000]",
     )
     parser.add_argument(
         "--split",

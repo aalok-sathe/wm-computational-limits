@@ -15,6 +15,7 @@ import tokenizers
 import torch
 from transformers import PreTrainedTokenizerFast
 import numpy as np
+from tqdm.auto import tqdm
 
 # local
 from workingmem.task.interface import GeneratedCachedDataset, SupportsGetitem
@@ -109,12 +110,13 @@ class SIRDataset(GeneratedCachedDataset):
         n_reg: int = 100,
         n_items: int = 100,
         seq_len: int = 100,
-        concurrent_regs: int = 2,
+        concurrent_reg: int = 2,
+        concurrent_items: int = 4,
         heldout_reg: int = 20,
         heldout_items: int = 20,
         locality: typing.Union[int, None] = 10,
         ignore_prob: float = 0.3,
-        same_diff_prob: float = 0.4,
+        same_diff_prob: float = 0.5,
         #
         seed=42,
         #
@@ -140,9 +142,13 @@ class SIRDataset(GeneratedCachedDataset):
                 total number of items in vocab to draw from.  defaults to 100.
             seq_len (int):
                 length of a trial sequence. defaults to 100.
-            concurrent_regs (int):
+            concurrent_reg (int):
                 number of registers to use concurrently within a trial.  default: 2. other instances
                 of the experiment will change this parameter upwards to 3, 4, etc.
+            concurrent_items (int):
+                number of items to use concurrently within a trial. defaults to 4.
+                if this number is too high, we risk a simple heuristic solution: simply check if
+                an item has appeared in the prior history, when number of total items n_items is high.
             heldout_reg (int):
                 number (absolute) of registers to hold out. these registers will never make an
                 appearance in the train set. defaults to 20.
@@ -186,7 +192,8 @@ class SIRDataset(GeneratedCachedDataset):
             n_reg=n_reg,
             n_items=n_items,
             seq_len=seq_len,
-            concurrent_regs=concurrent_regs,
+            concurrent_reg=concurrent_reg,
+            concurrent_items=concurrent_items,
             heldout_reg=heldout_reg,
             heldout_items=heldout_items,
             locality=locality,
@@ -208,13 +215,39 @@ class SIRDataset(GeneratedCachedDataset):
         # since our data supports __getitem__ (for now) we can index into it
         return self.data[idx]
 
-    def generate(self) -> typing.Collection[typing.Sequence[str]]:
-        logger.info("generating data for SIR task")
+    def generate_trial_sequence(
+        self,
+    ) -> str:
+        """
+        Generates a sequence of `seq_len` trials for the SIR task
 
-        # seed the random number generator
-        np.random.seed(self.seed)
-        random.seed(self.seed)
+        key things to remember:
+        1. we have n_reg registers and n_items items in total, but not all of them are
+           used in every trial. only concurrent_reg are used. and same_diff_prob determines
+           how items are drawn: if a 'same' outcome is picked, the same item is used for that
+           register in the next trial. if a 'diff' outcome is picked, a new item is uniformly
+           drawn from the item pool without replacement.
+        2. ignore_prob determines the likelihood of an ignore instruction. if an ignore instruction
+           is given, the register is not updated.
+        3. locality determines the locality of the registers. if locality is None, registers are
+           drawn uniformly from the register pool. if locality is an integer, registers are drawn
+           from a local pool of registers that are within locality distance of the current register.
+           in practice, this means, picking a start_idx uniformly from the range [0, n_reg) with
+           wraparound, and picking registers uniformly without replacement from this range
 
+        algorithm
+          1. pick a start_idx uniformly from the range [0, n_reg)
+          2. choose concurrent_reg registers from the range [start_idx, start_idx + (locality or n_reg)) % n_reg
+             and likewise choose concurrent_items items from the range [0, n_items)
+        +-------- (repeat for seq_len steps) ----------------------------+
+        | 3. pick one register to operate on from the chosen registers   |
+        | 4. pick an instruction using ignore_prob                       |
+        | 5. pick an item using same_diff_prob, unless there was no      |
+        |     previous item (note that 4 & 5 are independent)            |
+        | 6. update the register with the item if the instruction is     |
+        |     not ignore                                                 |
+        +----------------------------------------------------------------+
+        """
         store = SIRTokenizer.instructions.store
         ignore = SIRTokenizer.instructions.ignore
         # recall = self.tokenizer.instructions.recall
@@ -223,29 +256,113 @@ class SIRDataset(GeneratedCachedDataset):
         reg = SIRTokenizer.symbols.register
         item = SIRTokenizer.symbols.item
 
-        # key things to remember:
-        # 1. we have n_reg registers and n_items items in total, but not all of them are
-        #    used in every trial. only concurrent_reg are used.
+        # step 1
+        # pick a start_idx uniformly from the range [0, n_reg)
+        start_idx = np.random.randint(0, self.attrs["n_reg"])
 
-        # dummy
-        dummy = (
-            store,
-            reg(0),
-            item(0),
-            diff,
-            ignore,
-            reg(1),
-            item(1),
-            diff,
-            store,
-            reg(1),
-            item(3),
-            diff,
-            ignore,
-            reg(0),
-            item(0),
-            same,
+        # step 2
+        # pick registers from the range [start_idx, start_idx + (locality or n_reg)) % n_reg
+        assert self.attrs["locality"] >= self.attrs["concurrent_reg"], (
+            f"locality must be at least the number of concurrent registers to use. you supplied: {self.attrs['locality']} < {self.attrs['concurrent_reg']}"
         )
-        return [" ".join(dummy)] * (
-            self.attrs["n_train"] + self.attrs["n_val"] + self.attrs["n_test"]
+        reg_range = (
+            np.arange(
+                start_idx,
+                start_idx + (self.attrs["locality"] or self.attrs["n_reg"]),
+                dtype=int,
+            )
+            % self.attrs["n_reg"]
         )
+
+        # sample w/o replacement
+        # regs_chosen now contains the indexes of the registers to use
+        regs_chosen: typing.Collection[int] = np.random.choice(
+            reg_range, self.attrs["concurrent_reg"], replace=False
+        )
+        items_chosen: typing.Collection[int] = np.random.choice(
+            np.arange(self.attrs["n_items"]),
+            self.attrs["concurrent_items"],
+            replace=False,
+        )
+
+        # here is where we start maintaining the state of the registers (as in, the item they currently hold)
+        reg_state = {i: -1 for i in regs_chosen}
+
+        this_trial_seq = []
+        # repeat seq_len times:
+        for i in range(self.attrs["seq_len"]):
+            # step 3
+            # pick one register to operate on from the chosen registers
+            # NOTE: in the future, to manipulate delayed recall from a certain register,
+            # we can use the `p=...` argument to np.random.choice to bias the selection
+            # away from a certain register
+            this_reg_idx = np.random.choice(regs_chosen, p=None)
+
+            # step 4
+            # pick an instruction using ignore_prob
+            this_instr = (
+                ignore if np.random.rand() < self.attrs["ignore_prob"] else store
+            )
+
+            # step 5
+            # pick an item using same_diff_prob, unless there was no previous item, in which case,
+            # we must pick a new item and make the instruction be 'diff' by default
+            if (
+                reg_state[this_reg_idx] == -1
+                or np.random.rand() > self.attrs["same_diff_prob"]
+            ):
+                this_item = np.random.choice(items_chosen, p=None)
+                this_label = diff
+            else:
+                this_item = reg_state[this_reg_idx]
+                this_label = same
+
+            # right here is where we assemble the current trial
+            this_trial = [
+                this_instr,
+                reg(this_reg_idx),
+                item(this_item),
+                this_label,
+            ]
+            this_trial_seq.extend(this_trial)
+
+            # step 6
+            # update the register with the new item if the instruction is not ignore
+            if this_instr != ignore:
+                # doesn't matter if it's the same or a new item
+                reg_state[this_reg_idx] = this_item
+
+        return " ".join(this_trial_seq)
+
+    def generate(self) -> typing.Collection[typing.Sequence[str]]:
+        """
+        makes repeated calls to `_generate_trial_sequence` to generate a total of
+        n_train + n_val + n_test examples.
+        """
+        logger.info("generating data for SIR task")
+
+        # seed the random number generator
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+
+        examples = set()
+
+        for _ in tqdm(
+            range(
+                (
+                    total := self.attrs["n_train"]
+                    + self.attrs["n_val"]
+                    + self.attrs["n_test"]
+                )
+            ),
+            desc="generating SIR trials",
+            total=total,
+        ):
+            # check for duplicate trials
+            while True:
+                trial = self.generate_trial_sequence()
+                if trial not in examples:
+                    examples.add(trial)
+                    break
+            # yield _generate_trial()
+        return list(examples)

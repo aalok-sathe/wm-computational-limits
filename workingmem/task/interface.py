@@ -32,7 +32,9 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
     _hash_length = 6
     attrs: dict
 
-    def __init__(self, basedir="datasets", split=None, seed=None, **kwargs):
+    def __init__(
+        self, basedir="datasets", split=None, seed=None, generate=True, **kwargs
+    ):
         self.attrs = dict(seed=seed, **kwargs)
         self.seed = seed
         self.split = split
@@ -48,11 +50,17 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                 f"data already exists at {self.basedir}: \n"
                 + "\n\t".join(map(str, self.basedir.iterdir()))
             )
+            self._load_split()
         else:
-            data = self.generate()
-            self._to_disk(data)
-
-        self._load_split()
+            if generate:
+                data = self.generate()
+                self._to_disk(data)
+            else:
+                logger.info(
+                    f"no data found at {self.basedir}, and `generate` is set to False. "
+                    "please set `generate=True` to generate and save the dataset or make"
+                    "calls to `generate_trial_sequence()` for individual trial sequences"
+                )
 
     def _load_split(self):
         """
@@ -94,6 +102,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         splits = np.split(data, cutoffs)
 
         for split, data in zip(["train", "val", "test"], splits):
+            logger.info(f"writing {len(data)} examples to {split} at {self.basedir}")
             split_path = self.basedir / f"{split}.yaml"
             with split_path.open("w") as f:
                 yaml.dump(data.tolist(), f, Dumper=yaml.SafeDumper, width=float("inf"))
@@ -138,6 +147,13 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
     def __getitem__(self, index):
         # this behavior is both, dataset, and split, dependent
         return NotImplemented
+
+    @abstractmethod
+    def generate_trial_sequence(self):
+        """
+        generates a single trial sequence for the task. this is a single example.
+        """
+        NotImplemented
 
     @abstractmethod
     def generate(self) -> typing.Collection[typing.Sequence[str]]:
