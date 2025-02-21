@@ -9,8 +9,8 @@ maintenance of information. In computational models, the retrieval may be facili
 of strategies.
 
 To generate a dataset, use:
-```bash
- (main) λ python -m workingmem.task.SIR -h
+```
+python -m workingmem.task.SIR -h
 usage: __main__.py [-h] [--n_reg N_REG] [--n_items N_ITEMS] [--seq_len SEQ_LEN] [--concurrent_reg CONCURRENT_REG] [--concurrent_items CONCURRENT_ITEMS]
                    [--heldout_reg HELDOUT_REG] [--heldout_items HELDOUT_ITEMS] [--locality LOCALITY] [--ignore_prob IGNORE_PROB]
                    [--same_diff_prob SAME_DIFF_PROB] [--n_train N_TRAIN] [--n_val N_VAL] [--n_test N_TEST] [--split SPLIT] [--basedir BASEDIR]
