@@ -15,15 +15,57 @@ import torch
 from tqdm.auto import tqdm
 
 # local
-from workingmem.task.interface import GeneratedCachedDataset, SupportsGetitem
+from workingmem.task.interface import (
+    GeneratedCachedDataset,
+    GeneratedCachedDatasetConfig,
+    SupportsGetitem,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class SIRConfig(GeneratedCachedDatasetConfig):
+    n_reg: int = 100
+    """total number of registers in vocab to draw from"""
+    n_items: int = 100
+    """total number of items in vocab to draw from"""
+    seq_len: int = 100
+    """ length of a trial sequence"""
+    concurrent_reg: int = 2
+    """number of registers to use concurrently within a trial. if this
+    number is too high, we risk a simple heuristic solution such as: 
+    simply check if an item has appeared in the prior history, when 
+    number of total items n_items is high"""
+    concurrent_items: int = 5
+    """number of items to use concurrently within a trial"""
+    heldout_reg: int = 20
+    """number (absolute) of registers to hold out. these registers will never make an
+    appearance in the train set"""
+    heldout_items: int = 20
+    """number (absolute) of items to hold out. these items will never appear in the train"""
+    locality: typing.Union[int, None] = None
+    """the locality value, when supplied, is used to sample concurrent registers locally
+        (numerically close to one another). i.e., register_i can only ever occur in the same
+        trial sequence as register_{i \pm locality}.  this allows us to break the locality
+        constraint at test time to see out-of-locality-distribution generalization.
+        TODO: option to manipulate locality of train/test split. alternatively, we could
+        do this evaluation using a separate dataset with the locality parameter relaxed
+        (which should make the test data OOD)"""
+    ignore_prob: float = 0.3
+    """probability of an ignore instruction"""
+    same_diff_prob: float = 0.5
+    """probability of a 'same' outcome on a particular register. varies independently of
+        store/ignore instruction"""
+
+    # seed: int = None
+    n_train: int = 100_000
+    n_val: int = 2_000
+    n_test: int = 2_000
+
+
 # Create a custom tokenizer class by extending PreTrainedTokenizerFast
-
-
 class SIRTokenizer:
     """
     taken from: https://discuss.huggingface.co/t/creating-a-custom-token-vocabulary-for-gpt-2/134522
@@ -111,26 +153,7 @@ class SIRDataset(GeneratedCachedDataset):
 
     def __init__(
         self,
-        n_reg: int = 100,
-        n_items: int = 100,
-        seq_len: int = 100,
-        concurrent_reg: int = 2,
-        concurrent_items: int = 5,
-        heldout_reg: int = 20,
-        heldout_items: int = 20,
-        locality: typing.Union[int, None] = 10,
-        ignore_prob: float = 0.3,
-        same_diff_prob: float = 0.5,
-        #
-        seed=None,
-        #
-        n_train: int = 100_000,
-        n_val: int = 2_000,
-        n_test: int = 2_000,
-        #
-        split="train",
-        basedir="datasets",
-        generate=True,
+        config: SIRConfig,
     ):
         """
         Class representing an instance of a dataset for the SIR task.
@@ -138,90 +161,15 @@ class SIRDataset(GeneratedCachedDataset):
         the vocabulary size, the number of things held out at the time of training,
         the length of a trial sequence, the number of registers to use concurrently,
         and whether concurrently-used registers have a local structure to them (locality).
-
-        Args:
-        ---
-            n_reg (int):
-                total number of registers in vocab to draw from.  defaults to 100.
-            n_items (int):
-                total number of items in vocab to draw from.  defaults to 100.
-            seq_len (int):
-                length of a trial sequence. defaults to 100.
-            concurrent_reg (int):
-                number of registers to use concurrently within a trial.  default: 2. other instances
-                of the experiment will change this parameter upwards to 3, 4, etc.
-            concurrent_items (int):
-                number of items to use concurrently within a trial. defaults to 4.
-                if this number is too high, we risk a simple heuristic solution: simply check if
-                an item has appeared in the prior history, when number of total items n_items is high.
-            heldout_reg (int):
-                number (absolute) of registers to hold out. these registers will never make an
-                appearance in the train set. defaults to 20.
-            heldout_items (int):
-                number (absolute) of items to hold out. these items will never appear in the train
-                set. defaults to 20.
-            locality (typing.Union[int, None]):
-                the locality value, when supplied, is used to sample concurrent registers locally
-                (numerically close to one another). i.e., register_i can only ever occur in the same
-                trial sequence as register_{i \pm locality}.  this allows us to break the locality
-                constraint at test time to see out-of-locality-distribution generalization.
-                defaults to 10.
-                TODO: option to manipulate locality of train/test split. alternatively, we could
-                do this evaluation using a separate dataset with the locality parameter relaxed
-                (which should make the test data OOD)
-            ignore_prob (float):
-                probability of an ignore instruction. defaults to 0.3.
-            same_diff_prob (float):
-                probability of a 'same' outcome on a particular register. varies independently of
-                store/ignore instruction. defaults to 0.4.
-
-            n_train (int):
-                number of training trials to generate. defaults to 10,000.
-            n_val (int):
-                number of validation trials to generate. defaults to 2,000.
-            n_test (int):
-                number of test trials to generate. defaults to 2,000.
-
-            split (str):
-                the split of the dataset to use. if no data already exists on disk,
-                data is generated for all splits (we need to make sure all examples
-                are unique and non-repeating across splits). if data already exists
-                (or once data has been generated), simply supplies examples from
-                appropriate split. defaults to "train".
-            basedir (str):
-                the base directory to store the dataset in.
         """
+        super().__init__(config)
         # seed the random number generator
-        if seed is not None:
-            np.random.seed(seed)
-            random.seed(seed)
+        if self.config.seed is not None:
+            np.random.seed(self.config.seed)
+            random.seed(self.config.seed)
 
-        self.tokenizer = SIRTokenizer.from_params(n_reg, n_items)
-
-        # calling super() with kwargs stores these things in self.attrs
-        super().__init__(
-            # the first set of kwargs makes it into the `self.attrs` dict
-            # and largely determines the nature of the dataset
-            n_reg=n_reg,
-            n_items=n_items,
-            seq_len=seq_len,
-            concurrent_reg=concurrent_reg,
-            concurrent_items=concurrent_items,
-            heldout_reg=heldout_reg,
-            heldout_items=heldout_items,
-            locality=locality,
-            ignore_prob=ignore_prob,
-            same_diff_prob=same_diff_prob,
-            # random seed
-            seed=seed,
-            # specify sizes of splits
-            n_train=n_train,
-            n_val=n_val,
-            n_test=n_test,
-            # the next set of kwargs are used in the init but not recorded in attrs
-            basedir=basedir,
-            split=split,
-            generate=generate,
+        self.tokenizer = SIRTokenizer.from_params(
+            self.config.n_reg, self.config.n_items
         )
 
     # def __getitem__(self, idx) -> typing.Sequence[str]:
@@ -359,8 +307,8 @@ class SIRDataset(GeneratedCachedDataset):
 
         return {
             "sequence": " ".join(this_trial_seq),
-            "regs_used": regs_chosen.tolist(),
-            "items_used": items_chosen.tolist(),
+            "regs_used": tuple(regs_chosen.tolist()),
+            "items_used": tuple(items_chosen.tolist()),
             "locality": self.attrs["locality"],
         }
 
@@ -385,23 +333,21 @@ class SIRDataset(GeneratedCachedDataset):
             random.seed(self.seed)
 
         examples = set()
+        examples_list = []
 
+        total = self.attrs["n_train"] + self.attrs["n_val"] + self.attrs["n_test"]
         for _ in tqdm(
-            range(
-                (
-                    total := self.attrs["n_train"]
-                    + self.attrs["n_val"]
-                    + self.attrs["n_test"]
-                )
-            ),
+            range(total),
             desc="generating SIR trials",
             total=total,
         ):
             # check for duplicate trials
             while True:
                 trial = self.generate_trial_sequence()
-                if trial not in examples:
-                    examples.add(trial)
+                fstrial = frozenset(sorted(trial.items()))
+                if fstrial not in examples:
+                    examples.add(fstrial)
+                    examples_list.append(trial)
                     break
             # yield _generate_trial()
-        return list(examples)
+        return list(examples_list)

@@ -1,20 +1,42 @@
-from abc import ABC, abstractmethod
-import typing
-from pathlib import Path
-import numpy as np
-import yaml
-from hashlib import sha1
 import logging
+import typing
+from abc import ABC, abstractmethod
+from hashlib import sha1
+from pathlib import Path
+import dataclasses
 
+import numpy as np
+import tokenizers
 import torch
+import yaml
 
 logger = logging.getLogger(__name__)
 
 
-class SupportsGetitem(ABC):
-    @abstractmethod
-    def __getitem__(self, index):
-        return NotImplemented
+@dataclasses.dataclass
+class GeneratedCachedDatasetConfig:
+    """
+    configuration for a `GeneratedCachedDataset` instance
+    """
+
+    split: typing.Literal["train", "val", "test"]
+    """the split of the dataset to use. if no data already exists on disk,
+    data is generated for all splits (we need to make sure all examples
+    are unique and non-repeating across splits). if data already exists
+    (or once data has been generated), simply supplies examples from
+    appropriate split. defaults to "train".
+    """
+    basedir: typing.Union[str, Path] = "datasets"
+    """where the dataset should be stored and/or read from"""
+    seed: typing.Union[int, None] = None
+    """by default, no seed is set to enable random generation. upon setting a seed, the dataset instance should be reproducible"""
+    generate: bool = True
+    """whether to generate the dataset if it doesn't already exist on disk,
+       or simply to initialize it to enable calling `generate_trial_sequence`"""
+
+
+class SupportsGetitem(typing.Protocol):
+    def __getitem__(self, index): ...
 
 
 class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
@@ -30,33 +52,35 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
 
     _hash_length = 6
     attrs: dict
+    label_mask: torch.Tensor = None
+    tokenizer: tokenizers.Tokenizer
 
     def __init__(
-        self, basedir="datasets", split=None, seed=None, generate=True, **kwargs
+        self,
+        config: GeneratedCachedDatasetConfig,
     ):
-        self.attrs = dict(seed=seed, **kwargs)
-        self.seed = seed
-        self.split = split
-        self.basedir = Path(basedir).expanduser().resolve() / str(self)
-        self.basedir.mkdir(parents=True, exist_ok=True)
+        self.config = config
+        self.config.basedir = Path(self.config.basedir).expanduser().resolve()
+        self.config.basedir /= str(self)
+        self.config.basedir.mkdir(parents=True, exist_ok=True)
 
-        train_path = self.basedir / "train.yaml"
-        eval_path = self.basedir / "val.yaml"
-        test_path = self.basedir / "test.yaml"
+        train_path = self.config.basedir / "train.yaml"
+        eval_path = self.config.basedir / "val.yaml"
+        test_path = self.config.basedir / "test.yaml"
         if train_path.exists() and eval_path.exists() and test_path.exists():
             # list contents of the directory
             logger.info(
-                f"data already exists at {self.basedir}: \n"
-                + "\n\t".join(map(str, self.basedir.iterdir()))
+                f"data already exists at {self.config.basedir}: \n"
+                + "\n\t".join(map(str, self.config.basedir.iterdir()))
             )
             self._load_split()
         else:
-            if generate:
+            if self.config.generate:
                 data = self.generate()
                 self._to_disk(data)
             else:
                 logger.info(
-                    f"no data found at {self.basedir}, and `generate` is set to False. "
+                    f"no data found at {self.config.basedir}, and `generate` is set to False. "
                     "please set `generate=True` to generate and save the dataset or make"
                     "calls to `generate_trial_sequence()` for individual trial sequences"
                 )
@@ -69,8 +93,8 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         with split_path.open("r") as f:
             self.data = yaml.load(f, Loader=yaml.SafeLoader)
 
-        assert len(self.data) == self.attrs[f"n_{self.split}"], (
-            f"Mismatch in # of examples in {self.split} on disk at {split_path} ({len(self.data)}) and config value {self.attrs['n_' + self.split]}"
+        assert len(self.data) == self.attrs[f"n_{self.config.split}"], (
+            f"Mismatch in # of examples in {self.config.split} on disk at {split_path} ({len(self.data)}) and config value {self.attrs['n_' + self.config.split]}"
         )
 
     def _to_disk(self, data: typing.Collection):
@@ -81,8 +105,8 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         """
 
         with (
-            open(self.basedir / "config.yaml", "w") as f,
-            open(self.basedir / (repr(self) + ".txt"), "w") as k,
+            open(self.config.basedir / "config.yaml", "w") as f,
+            open(self.config.basedir / (repr(self) + ".txt"), "w") as k,
         ):
             yaml.dump(self._metadata(), f, Dumper=yaml.SafeDumper)
             yaml.dump(self._metadata(), k, Dumper=yaml.SafeDumper)
@@ -95,22 +119,26 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                 f"expected {total_examples} examples, got {len(data)} instead"
             )
 
-        cutoffs = [self.attrs[f"n_{split}"] for split in ["train", "val", "test"]]
+        cutoffs = [
+            getattr(self.config, f"n_{split}") for split in ["train", "val", "test"]
+        ]
         cutoffs = np.cumsum(cutoffs)[:-1]
         # logger.info(f"splitting data into {cutoffs} splits")
         splits = np.split(data, cutoffs)
 
         for split, data in zip(["train", "val", "test"], splits):
-            logger.info(f"writing {len(data)} examples to {split} at {self.basedir}")
-            split_path = self.basedir / f"{split}.yaml"
+            logger.info(
+                f"writing {len(data)} examples to {split} at {self.config.basedir}"
+            )
+            split_path = self.config.basedir / f"{split}.yaml"
             with split_path.open("w") as f:
                 yaml.dump(data.tolist(), f, Dumper=yaml.SafeDumper, width=float("inf"))
 
     def __len__(self):
-        assert self.attrs[f"n_{self.split}"] == len(self.data), (
+        assert getattr(self.config, f"n_{self.split}") == len(self.data), (
             "Mismatch in dataset length at initialization and number of examples in the dataset on disk"
         )
-        return self.attrs[f"n_{self.split}"]
+        return getattr(self.config, f"n_{self.split}")
 
     def __str__(self) -> str:
         """
@@ -122,7 +150,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
 
     def __repr__(self):
         """
-        creates a stringified identity of the dataset for representing in execution
+        creates a stringified identity of the dataset for printing during execution
         """
         attr_str = ",".join([f"{k}={v}" for k, v in sorted(self._metadata().items())])
         H = sha1(attr_str.encode()).hexdigest()[: self._hash_length].upper()
@@ -133,7 +161,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         returns a dictionary of metadata for the dataset, which will (ideally)
         be dumped as a YAML file alongside the dataset in the dataset root
         """
-        return self.attrs
+        return dataclasses.asdict(self.config)
 
     def __eq__(self, other) -> bool:
         """
@@ -201,7 +229,9 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             dest = Path(path).expanduser().resolve()
             if not dest.exists():
                 dest = Path()
-        config = yaml.load(dest / "config.yaml", Loader=yaml.SafeLoader)
-        instance = cls(**config)
+        config = GeneratedCachedDatasetConfig(
+            **yaml.load(dest / "config.yaml", Loader=yaml.SafeLoader)
+        )
+        instance = cls(config)
 
         return instance

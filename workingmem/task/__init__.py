@@ -1,3 +1,1 @@
-""" """
-
-from workingmem.task.SIR.SIR import SIRDataset
+from workingmem.task.SIR.SIR import SIRDataset, SIRConfig

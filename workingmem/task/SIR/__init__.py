@@ -1,1 +1,1 @@
-from workingmem.task.SIR.SIR import SIRDataset, SIRTokenizer
+from workingmem.task.SIR.SIR import SIRDataset, SIRTokenizer, SIRConfig
