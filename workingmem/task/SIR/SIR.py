@@ -60,9 +60,9 @@ class SIRConfig(GeneratedCachedDatasetConfig):
         store/ignore instruction"""
 
     # seed: int = None
-    n_train: int = 100_000
-    n_val: int = 2_000
-    n_test: int = 2_000
+    n_train: int = 1_000
+    n_val: int = 500
+    n_test: int = 500
 
 
 # Create a custom tokenizer class by extending PreTrainedTokenizerFast
@@ -179,7 +179,6 @@ class SIRDataset(GeneratedCachedDataset):
         sequence = torch.LongTensor(self.data[idx]["sequence"])
         answer_locations = torch.LongTensor(self.data[idx]["answer_locations"])
         return {"tokens": sequence, "answer_locations": answer_locations}
-        return self.data[idx]
 
     def generate_trial_sequence(
         self,
@@ -225,36 +224,37 @@ class SIRDataset(GeneratedCachedDataset):
 
         # step 1
         # pick a start_idx uniformly from the range [0, n_reg)
-        start_idx = np.random.randint(0, self.attrs["n_reg"])
+        start_idx = np.random.randint(0, self.config.n_reg)
 
         # step 2
         # pick registers from the range [start_idx, start_idx + (locality or n_reg)) % n_reg
-        assert self.attrs["locality"] >= self.attrs["concurrent_reg"], (
-            f"locality must be at least the number of concurrent registers to use. you supplied: {self.attrs['locality']} < {self.attrs['concurrent_reg']}"
-        )
+        if self.config.locality is not None:
+            assert self.config.locality >= self.config.concurrent_reg, (
+                f"locality must be at least the number of concurrent registers to use. you supplied: {self.config.locality} < {self.config.concurrent_reg}"
+            )
         reg_range = np.arange(
             start_idx,
             start_idx
             + (
-                self.attrs["locality"]
+                self.config.locality
                 # WLG, heldout registers are numerically at the end of the reg pool
-                or (self.attrs["n_reg"] - self.attrs["heldout_reg"])
+                or (self.config.n_reg - self.config.heldout_reg)
             ),
             dtype=int,
             # this way, we wraparound at the end of the available (non-held-out) register pool
-        ) % (self.attrs["n_reg"] - self.attrs["heldout_reg"])
+        ) % (self.config.n_reg - self.config.heldout_reg)
 
         # sample w/o replacement
         # regs_chosen now contains the indexes of the registers to use
         regs_chosen: np.ndarray[int] = np.random.choice(
-            reg_range, self.attrs["concurrent_reg"], replace=False
+            reg_range, self.config.concurrent_reg, replace=False
         )
         items_chosen: np.ndarray[int] = np.random.choice(
             # WLG, heldout items are numerically at the end of the item pool, and
             # so far we aren't doing anything like locality or wraparound with them
             # so this hunk is simpler
-            np.arange(self.attrs["n_items"] - self.attrs["heldout_items"]),
-            self.attrs["concurrent_items"],
+            np.arange(self.config.n_items - self.config.heldout_items),
+            self.config.concurrent_items,
             replace=False,
         )
 
@@ -263,7 +263,7 @@ class SIRDataset(GeneratedCachedDataset):
 
         this_trial_seq = []
         # repeat seq_len times:
-        for i in range(self.attrs["seq_len"]):
+        for i in range(self.config.seq_len):
             # step 3
             # pick one register to operate on from the chosen registers
             # NOTE: in the future, to manipulate delayed recall from a certain register,
@@ -273,16 +273,14 @@ class SIRDataset(GeneratedCachedDataset):
 
             # step 4
             # pick an instruction using ignore_prob
-            this_instr = (
-                ignore if np.random.rand() < self.attrs["ignore_prob"] else store
-            )
+            this_instr = ignore if np.random.rand() < self.config.ignore_prob else store
 
             # step 5
             # pick an item using same_diff_prob, unless there was no previous item, in which case,
             # we must pick a new item and make the instruction be 'diff' by default
             if (
                 reg_state[this_reg_idx] == -1
-                or np.random.rand() > self.attrs["same_diff_prob"]
+                or np.random.rand() > self.config.same_diff_prob
             ):
                 this_item = np.random.choice(items_chosen, p=None)
                 this_label = diff
@@ -309,7 +307,7 @@ class SIRDataset(GeneratedCachedDataset):
             "sequence": " ".join(this_trial_seq),
             "regs_used": tuple(regs_chosen.tolist()),
             "items_used": tuple(items_chosen.tolist()),
-            "locality": self.attrs["locality"],
+            "locality": self.config.locality,
         }
 
     @property
@@ -318,7 +316,7 @@ class SIRDataset(GeneratedCachedDataset):
         returns the locations of the "answers" in the sequence where loss should be computed (the only deterministic/structured)
         part of the SIR task.
         """
-        return SIRDataset.trial_label_mask * self.attrs["seq_len"]
+        return SIRDataset.trial_label_mask * self.config.seq_len
 
     def generate(self) -> typing.Collection[typing.Sequence[str]]:
         """
@@ -328,14 +326,14 @@ class SIRDataset(GeneratedCachedDataset):
         logger.info("generating data for SIR task")
 
         # seed the random number generator
-        if self.seed is not None:
-            np.random.seed(self.seed)
-            random.seed(self.seed)
+        if self.config.seed is not None:
+            np.random.seed(self.config.seed)
+            random.seed(self.config.seed)
 
         examples = set()
         examples_list = []
 
-        total = self.attrs["n_train"] + self.attrs["n_val"] + self.attrs["n_test"]
+        total = self.config.n_train + self.config.n_val + self.config.n_test
         for _ in tqdm(
             range(total),
             desc="generating SIR trials",

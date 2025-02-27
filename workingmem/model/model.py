@@ -16,7 +16,6 @@ from workingmem.task.interface import GeneratedCachedDataset
 
 @dataclasses.dataclass
 class ModelConfig:
-    decoder_only: bool = True
     attn_only: bool = True
     n_layers: int = 2
     n_heads: int = 2
@@ -27,8 +26,8 @@ class ModelConfig:
     act_fn: str = "relu"
     d_vocab: int = None  # vocab is determined by the tokenizer
     init_weights: bool = True
-    checkpoint_dir: typing.Union[Path, None] = None
-    from_checkpoint: typing.Union[Path, None] = None
+    # checkpoint_dir: typing.Union[Path, None] = None
+    # from_checkpoint: typing.Union[Path, None] = None
 
 
 # class Embeddings: ...

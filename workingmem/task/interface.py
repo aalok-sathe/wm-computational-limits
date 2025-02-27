@@ -26,7 +26,7 @@ class GeneratedCachedDatasetConfig:
     (or once data has been generated), simply supplies examples from
     appropriate split. defaults to "train".
     """
-    basedir: typing.Union[str, Path] = "datasets"
+    rootdir: typing.Union[str, Path] = "datasets"
     """where the dataset should be stored and/or read from"""
     seed: typing.Union[int, None] = None
     """by default, no seed is set to enable random generation. upon setting a seed, the dataset instance should be reproducible"""
@@ -46,12 +46,12 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
     and cached by the `cache` method.
     a generated dataset is loaded by the `from_path` classmethod which returns an instance of the
     dataset using the config available at the path.
-    the dataset object has `attrs` which specifies the parameters used to generate the dataset.
+    the dataset object has a `config` which specifies the parameters used to generate the dataset.
 
     """
 
     _hash_length = 6
-    attrs: dict
+    config: GeneratedCachedDatasetConfig
     label_mask: torch.Tensor = None
     tokenizer: tokenizers.Tokenizer
 
@@ -60,8 +60,8 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         config: GeneratedCachedDatasetConfig,
     ):
         self.config = config
-        self.config.basedir = Path(self.config.basedir).expanduser().resolve()
-        self.config.basedir /= str(self)
+        rootdir = Path(self.config.rootdir).expanduser().resolve()
+        self.config.basedir = rootdir / str(self)
         self.config.basedir.mkdir(parents=True, exist_ok=True)
 
         train_path = self.config.basedir / "train.yaml"
@@ -89,12 +89,12 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         """
         loads the split from disk
         """
-        split_path = self.basedir / f"{self.split}.yaml"
+        split_path = self.config.basedir / f"{self.config.split}.yaml"
         with split_path.open("r") as f:
             self.data = yaml.load(f, Loader=yaml.SafeLoader)
 
-        assert len(self.data) == self.attrs[f"n_{self.config.split}"], (
-            f"Mismatch in # of examples in {self.config.split} on disk at {split_path} ({len(self.data)}) and config value {self.attrs['n_' + self.config.split]}"
+        assert len(self.data) == getattr(self.config, f"n_{self.config.split}"), (
+            f"Mismatch in # of examples in {self.config.split} on disk at {split_path} ({len(self.data)}) and config value {getattr(self.config, 'n_' + self.config.split)}"
         )
 
     def _to_disk(self, data: typing.Collection):
@@ -112,7 +112,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             yaml.dump(self._metadata(), k, Dumper=yaml.SafeDumper)
 
         total_examples = sum(
-            self.attrs[f"n_{split}"] for split in ["train", "val", "test"]
+            getattr(self.config, f"n_{split}") for split in ["train", "val", "test"]
         )
         if len(data) != total_examples:
             raise ValueError(
@@ -135,10 +135,10 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                 yaml.dump(data.tolist(), f, Dumper=yaml.SafeDumper, width=float("inf"))
 
     def __len__(self):
-        assert getattr(self.config, f"n_{self.split}") == len(self.data), (
+        assert getattr(self.config, f"n_{self.config.split}") == len(self.data), (
             "Mismatch in dataset length at initialization and number of examples in the dataset on disk"
         )
-        return getattr(self.config, f"n_{self.split}")
+        return getattr(self.config, f"n_{self.config.split}")
 
     def __str__(self) -> str:
         """
@@ -161,7 +161,11 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         returns a dictionary of metadata for the dataset, which will (ideally)
         be dumped as a YAML file alongside the dataset in the dataset root
         """
-        return dataclasses.asdict(self.config)
+        attrs = dataclasses.asdict(self.config)
+        # return attrs without the basedir
+        return {
+            k: v for k, v in attrs.items() if k not in {"basedir", "split", "generate"}
+        }
 
     def __eq__(self, other) -> bool:
         """

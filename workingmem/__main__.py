@@ -20,6 +20,7 @@ from workingmem.model import (
 )
 from workingmem.task import SIRDataset, SIRConfig
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +40,14 @@ class MainConfig:
     trainer: TrainingConfig
     wandb: WandbConfig
     project_name: str = "wm-comp-limit-0"
+    seed = None
+
+    def __post_init__(self):
+        if self.seed is not None:
+            self.dataset.seed = self.seed
+            self.model.seed = self.seed
+            self.trainer.seed = self.seed
+            # additionally set the seed here?
 
 
 def main(config: MainConfig): ...
@@ -53,27 +62,31 @@ if __name__ == "__main__":
         sweep_config = {}
         wandb.init(project=config.project_name, config=config)
 
-    # set up the model
-    model = HookedTransformer(HookedTransformerConfig(**config.model))
     # set up the dataset
     dataset = SIRDataset(config.dataset)
+    eval_config = SIRConfig(**dataclasses.asdict(config.dataset))
+    eval_config.split = "val"
+    eval_dataset = SIRDataset(eval_config)
+
+    if config.model.d_vocab is None:
+        config.model.d_vocab = dataset.tokenizer.get_vocab_size()
+
+    logger.info("initializing model")
+    # set up the model
+    model = HookedTransformer(
+        HookedTransformerConfig(**dataclasses.asdict(config.model))
+    )
     # set up the trainer
     trainer = MaskedLossTrainer(
-        model=model.model,
-        dataset=dataset,
-        args=TrainingArguments(
-            output_dir=".",
-            per_device_train_batch_size=1,
-            per_device_eval_batch_size=1,
-            num_train_epochs=1,
-            logging_steps=1,
-            save_strategy="no",
-            evaluation_strategy="steps",
-            eval_steps=1,
-            save_total_limit=0,
-        ),
-        train_dataset=dataset.train_dataset,
-        eval_dataset=dataset.eval_dataset,
+        model=model,
+        train_dataset=dataset,
+        eval_dataset=eval_dataset,
+        args=config.trainer,
     )
-    # train the model
-    trainer.train()
+
+    if config.dataset.split == "train":
+        # train the model
+        logger.info("Training the model")
+        trainer.train()
+
+        logger.info("Finished.")
