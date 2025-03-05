@@ -3,9 +3,8 @@ name = "wm_limits"
 version = "0.1.0"
 description = "Investigating the nature of working memory limitations using computational modeling."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
-    "jaxtyping>=0.2.36",
     "numpy>=2.0.2",
     "torch>=2.6.0",
     "transformer-lens>=2.11.0",
