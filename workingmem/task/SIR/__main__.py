@@ -15,7 +15,7 @@ def main(config: SIRConfig):
 
     trial_seq = dataset.generate_trial_sequence()
     print(trial_seq)
-    print(tokenizer.encode(trial_seq["sequence"]).ids)
+    print(tokenizer.encode(trial_seq["sequence"]))
 
 
 if __name__ == "__main__":

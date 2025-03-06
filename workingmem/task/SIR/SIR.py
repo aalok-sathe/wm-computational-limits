@@ -119,9 +119,10 @@ class SIRTokenizer:
         #   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
         vocab = {
             "UNK": 0,  # it is problematic if this is ever used
-            cls.instructions.store: 1,
-            cls.instructions.ignore: 2,
-            cls.instructions.recall: 3,
+            "PAD": 1,
+            cls.instructions.store: 3,
+            cls.instructions.ignore: 4,
+            cls.instructions.recall: 5,
             cls.labels.same: 7,
             cls.labels.diff: 8,
             **{cls.symbols.register(i): 100 + i for i in range(n_reg)},
@@ -138,6 +139,12 @@ class SIRTokenizer:
         )
         # we want to tokenize on whitespace so that whitespace is ignored fully
         tokenizer.pre_tokenizer = tokenizers.pre_tokenizers.Whitespace()
+        tokenizer.enable_padding(
+            direction="left",
+            length=None,
+            pad_id=1,
+            pad_token="PAD",
+        )
 
         return tokenizer
 
@@ -150,10 +157,12 @@ class SIRDataset(GeneratedCachedDataset):
 
     data: SupportsGetitem
     trial_label_mask: tuple = (0, 0, 0, 1)
+    # use_bos_token: bool = True # alternatively, we just suck it up and handle the offset on the model side
 
     def __init__(
         self,
         config: SIRConfig,
+        tokenizer: tokenizers.Tokenizer = None,
     ):
         """
         Class representing an instance of a dataset for the SIR task.
@@ -168,17 +177,23 @@ class SIRDataset(GeneratedCachedDataset):
             np.random.seed(self.config.seed)
             random.seed(self.config.seed)
 
-        self.tokenizer = SIRTokenizer.from_params(
+        self.tokenizer = tokenizer or SIRTokenizer.from_params(
             self.config.n_reg, self.config.n_items
         )
 
-    # def __getitem__(self, idx) -> typing.Sequence[str]:
-    def __getitem__(self, idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(
+        self, idx: int
+    ) -> typing.Dict[str, typing.Union[torch.Tensor, tokenizers.Encoding]]:
         logger.debug(f"__getitem__ called for index {idx}")
         # since our data supports __getitem__ (for now) we can index into it
         sequence = torch.LongTensor(self.data[idx]["sequence"])
         answer_locations = torch.LongTensor(self.data[idx]["answer_locations"])
-        return {"tokens": sequence, "answer_locations": answer_locations}
+        encoding = self.tokenizer.encode(sequence)
+        return {
+            "tokens": sequence,
+            "answer_locations": answer_locations,
+            "encoding": encoding,
+        }
 
     def generate_trial_sequence(
         self,
@@ -311,12 +326,12 @@ class SIRDataset(GeneratedCachedDataset):
         }
 
     @property
-    def answer_locations(self):
+    def answer_locations(self) -> typing.List[int]:
         """
-        returns the locations of the "answers" in the sequence where loss should be computed (the only deterministic/structured)
+        returns a mask for the locations of the "answers" in the sequence where loss should be computed (the only deterministic/structured)
         part of the SIR task.
         """
-        return SIRDataset.trial_label_mask * self.config.seq_len
+        return list(SIRDataset.trial_label_mask * self.config.seq_len)
 
     def generate(self) -> typing.Collection[typing.Sequence[str]]:
         """

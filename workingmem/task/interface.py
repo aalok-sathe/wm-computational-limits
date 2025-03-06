@@ -174,6 +174,13 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         """
         return str(self) == str(other)
 
+    def __iter__(self) -> typing.Iterator[typing.Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        makes the dataset iterable over the examples in the appropriate split
+        """
+        for idx in range(len(getattr(self.config, f"n_{self.config.split}"))):
+            yield self[idx]
+
     @abstractmethod
     def __getitem__(self, index):
         # this behavior is both, dataset, and split, dependent
