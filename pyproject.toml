@@ -5,6 +5,7 @@ description = "Investigating the nature of working memory limitations using comp
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "einops>=0.8.1",
     "numpy>=2.0.2",
     "torch>=2.6.0",
     "transformer-lens>=2.11.0",

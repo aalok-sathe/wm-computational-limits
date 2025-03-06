@@ -1752,6 +1752,7 @@ name = "wm-limits"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "einops" },
     { name = "numpy" },
     { name = "torch" },
     { name = "transformer-lens" },
@@ -1766,6 +1767,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "einops", specifier = ">=0.8.1" },
     { name = "numpy", specifier = ">=2.0.2" },
     { name = "torch", specifier = ">=2.6.0" },
     { name = "transformer-lens", specifier = ">=2.11.0" },
