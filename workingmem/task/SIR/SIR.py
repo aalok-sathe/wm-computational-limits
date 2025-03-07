@@ -183,17 +183,28 @@ class SIRDataset(GeneratedCachedDataset):
 
     def __getitem__(
         self, idx: int
-    ) -> typing.Dict[str, typing.Union[torch.Tensor, tokenizers.Encoding]]:
-        logger.debug(f"__getitem__ called for index {idx}")
+    ) -> typing.Dict[str, typing.Union[typing.List, torch.Tensor, tokenizers.Encoding]]:
         # since our data supports __getitem__ (for now) we can index into it
-        sequence = torch.LongTensor(self.data[idx]["sequence"])
-        answer_locations = torch.LongTensor(self.data[idx]["answer_locations"])
+        sequence = self.data[idx]["sequence"]
+        # answer_locations = torch.LongTensor(self.data[idx]["answer_locations"])
         encoding = self.tokenizer.encode(sequence)
         return {
-            "tokens": sequence,
-            "answer_locations": answer_locations,
-            "encoding": encoding,
+            "tokens": sequence,  # "raw" tokens
+            "token_ids": torch.LongTensor(encoding.ids),
+            "attention_mask": torch.LongTensor(encoding.attention_mask),
+            "answer_locations": torch.LongTensor(self.answer_locations),
+            # "encoding": encoding,
         }
+
+    @property
+    def vocab_size(self) -> int:
+        """ """
+        return (
+            max(self.tokenizer.get_vocab().values()) + 1
+        )  # because the token_ids are 0-indexed
+
+        # WRONG: this returns the literal size of the vocab dict. what we instead we want the largest token_id in the vocab
+        # return self.tokenizer.get_vocab_size()
 
     def generate_trial_sequence(
         self,

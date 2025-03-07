@@ -5,5 +5,5 @@ from workingmem.model.model import (
     ModelConfig,
     HookedTransformer,
     HookedTransformerConfig,
+    TrainingConfig,
 )
-from workingmem.model.trainer import MaskedLossTrainer, TrainingConfig

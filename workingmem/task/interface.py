@@ -33,6 +33,7 @@ class GeneratedCachedDatasetConfig:
     generate: bool = True
     """whether to generate the dataset if it doesn't already exist on disk,
        or simply to initialize it to enable calling `generate_trial_sequence`"""
+    load: bool = True
 
 
 class SupportsGetitem(typing.Protocol):
@@ -78,6 +79,9 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             if self.config.generate:
                 data = self.generate()
                 self._to_disk(data)
+
+                if self.config.load:
+                    self._load_split()
             else:
                 logger.info(
                     f"no data found at {self.config.basedir}, and `generate` is set to False. "
@@ -178,7 +182,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         """
         makes the dataset iterable over the examples in the appropriate split
         """
-        for idx in range(len(getattr(self.config, f"n_{self.config.split}"))):
+        for idx in range(getattr(self.config, f"n_{self.config.split}")):
             yield self[idx]
 
     @abstractmethod
