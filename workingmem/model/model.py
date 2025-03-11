@@ -12,13 +12,15 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformer_lens import HookedTransformer, HookedTransformerConfig
+from matplotlib import pyplot as plt
 
 import wandb
 
 # local
 from workingmem.task.interface import GeneratedCachedDataset
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("workingmem")
+logger.setLevel(logging.DEBUG)
 
 
 @dataclasses.dataclass
@@ -111,6 +113,7 @@ class ModelWrapper(ABC):
         explicitly set the embeddings of the model to a supplied matrix. the dimensionality of the matrix should be
         `vocab_size x d_model` as initialized (check `self.config`)
         """
+        raise NotImplementedError
 
     def train(
         self,
@@ -140,6 +143,17 @@ class ModelWrapper(ABC):
             @property
             def step(self):
                 return self.epoch_step + self.epoch * len(dataset)
+
+        predictions_table = wandb.Table(
+            columns=[
+                "epoch",  # so that we can observe the evolution of the model's predictions over time
+                "eval_step",  # this is the step within the training epoch
+                "eval_example",
+                "eval_prediction",
+                "eval_labels",
+                "logits",  # logits will be a |V| x seq_len heatmap for each example
+            ]
+        )
 
         # set the model up for training
         # set up the optimizer
@@ -175,7 +189,11 @@ class ModelWrapper(ABC):
 
             if state.epoch % training_config.logging_steps == 0:
                 eval_loss, eval_acc = self.evaluate(
-                    eval_dataset, train_epoch=state.epoch
+                    eval_dataset,
+                    train_epoch=state.epoch,
+                    # passing the predictions table to the eval loop for
+                    # logging predictions and heatmaps over logits
+                    predictions_table=predictions_table,
                 )
 
                 wandb.log(
@@ -190,7 +208,10 @@ class ModelWrapper(ABC):
                 logger.debug(f"{wandb_logged = }")
 
     def evaluate(
-        self, dataset: GeneratedCachedDataset, train_epoch: int = None
+        self,
+        dataset: GeneratedCachedDataset,
+        train_epoch: int = None,
+        predictions_table: wandb.Table = None,
     ) -> typing.Tuple[float, float]:
         """
         Returns the average loss and accuracy of the model on the dataset (assumed eval or test split)
@@ -219,24 +240,42 @@ class ModelWrapper(ABC):
 
         with torch.no_grad():
             for eval_step, inputs in enumerate(eval_dataloader):
-                loss, answers, labels = self._step(inputs, return_outputs=True)
+                loss, answer_logits, answers, labels = self._step(
+                    inputs, return_outputs=True
+                )
                 # we have a single loss value per batch (this is a fine approximation)
-                losses += loss.detach().tolist()
+                losses += [loss.item()]
                 predictions += answers.detach().tolist()
                 actual_labels += labels.detach().tolist()
 
                 # log the first batch of eval examples and predictions to `wandb`
-                if eval_step < 5 and train_epoch is not None:
+                if train_epoch is not None and predictions_table is not None:
                     # TODO: should this be an artifact instead?
-                    wandb.log(
-                        {
-                            "epoch": train_epoch,
-                            "eval_step": eval_step,
-                            "eval_example": inputs["tokens"],
-                            "eval_prediction": dataset.tokenizer.decode(
-                                answers
-                            ),  # answers.tolist(),
-                        }
+                    # columns = [
+                    #     "epoch",  # so that we can observe the evolution of the model's predictions over time
+                    #     "eval_step",  # this is the step within the training epoch
+                    #     "eval_example",
+                    #     "eval_prediction",
+                    #     "eval_labels",
+                    #     "logits",  # logits will be a seq_len x |V| heatmap for each example
+                    # ]
+                    predictions_table.add_data(
+                        train_epoch,
+                        eval_step,
+                        inputs["tokens"],
+                        dataset.tokenizer.decode_batch(
+                            answers.detach().tolist()
+                        ),  # answers.tolist(),
+                        dataset.tokenizer.decode_batch(labels.detach().tolist()),
+                        wandb.Image(
+                            plt.imshow(
+                                torch.vstack((*answer_logits,)).detach().numpy(),
+                                cmap="Reds",
+                                origin="lower",
+                                interpolation="none",
+                                aspect="auto",
+                            )
+                        ),
                     )
 
         return (
@@ -248,7 +287,7 @@ class ModelWrapper(ABC):
         self, inputs: typing.Dict[str, torch.Tensor], return_outputs=False
     ) -> typing.Union[
         torch.Tensor,
-        typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     ]:
         """
         this method is responsible for computing the loss and optionally the labels
@@ -262,6 +301,7 @@ class ModelWrapper(ABC):
 
         tokens = inputs["token_ids"]
         tokens.to(self.device)
+        # shape of logits: (b, seq_len, |V|)
         logits = self.model(tokens)
 
         if return_outputs:
@@ -281,8 +321,9 @@ class ModelWrapper(ABC):
             # convert the boolean mask inputs['answer_locations'] to indices
             # and gather the answers at those locations
             # first, the conversion to indices:
-            # NOTE this will not work if each example has a different answer_locations shape!!!
-            # but it is OK to make that assumption
+            # ~ ~N~O~T~E~ ~t~h~i~s~ ~w~i~l~l~ ~n~o~t~ ~w~o~r~k~ ~i~f~ ~e~a~c~h~ ~e~x~a~m~p~l~e~ ~h~a~s~ ~a~ ~d~i~f~f~e~r~e~n~t~ ~a~n~s~w~e~r~_~l~o~c~a~t~i~o~n~s~ ~s~h~a~p~e~!~!~!~
+            # ~ ~b~u~t~ ~i~t~ ~i~s~ ~O~K~ ~t~o~ ~m~a~k~e~ ~t~h~a~t~ ~a~s~s~u~m~p~t~i~o~n
+            # length of `answer_indices_1d`: b x O(seq_len)
             answer_indices_1d = (
                 inputs["answer_locations"]
                 .reshape(-1)
@@ -294,24 +335,47 @@ class ModelWrapper(ABC):
 
             # then, the gathering answers (post argmax-softmax logits)
             gathered_answers_1d = torch.gather(
-                answers.reshape(-1), 0, answer_indices_1d
+                answers.reshape(-1), dim=0, index=answer_indices_1d
             )
             gathered_true_labels_1d = torch.gather(
-                inputs["token_ids"].reshape(-1), 0, answer_indices_1d
+                inputs["token_ids"].reshape(-1), dim=0, index=answer_indices_1d
             )
+            # we preserve the vocab dimension on logits
+            gathered_logits_2d = einops.rearrange(
+                logits, "b seq_len vocab -> (b seq_len) vocab"
+            )[answer_indices_1d, :]
 
             gathered_answers = gathered_answers_1d.reshape(
-                *inputs["answer_locations"].shape[:-1], -1
+                # b, O(seq_len)
+                *inputs["answer_locations"].shape[:-1],
+                -1,
             )
             gathered_true_labels = gathered_true_labels_1d.reshape(
-                *inputs["answer_locations"].shape[:-1], -1
+                # b, O(seq_len)
+                *inputs["answer_locations"].shape[:-1],
+                -1,
             )
+
+            # NOTE: this reshape won't be possible if the number of answers per example is not the same across examples
+            # b, num_answers_per_eg, |V|
+            gathered_logits = gathered_logits_2d.reshape(
+                inputs["answer_locations"].shape[0],
+                -1,  # whatever the number of answers per example is
+                logits.shape[-1],
+            )
+
+            batch_size = inputs["answer_locations"].shape[0]
+            answer_seq_len = len(answer_indices_1d) / batch_size
+            vocab_size = logits.shape[-1]
+
+            assert gathered_answers.shape == (batch_size, answer_seq_len)
+            assert gathered_logits.shape == (batch_size, answer_seq_len, vocab_size)
 
             logger.debug(
-                f"{gathered_answers.shape = }, {gathered_true_labels.shape = }"
+                f"{gathered_answers.shape = }, {gathered_true_labels.shape = }, {gathered_logits.shape = }"
             )
 
-            return loss, gathered_answers, gathered_true_labels
+            return loss, gathered_logits, gathered_answers, gathered_true_labels
         else:
             loss = compute_masked_loss(logits, inputs, return_outputs=return_outputs)
             return loss
@@ -322,6 +386,7 @@ def compute_masked_loss(
     inputs: typing.Dict[str, torch.Tensor],
     # label_mask: torch.Tensor = None,
     return_outputs=False,
+    return_logits=False,
 ) -> typing.Union[torch.Tensor, typing.Dict[str, torch.Tensor]]:
     """
     this method acts on:
@@ -341,7 +406,11 @@ def compute_masked_loss(
     b, seq_len, vocab_size = logits.shape
     # logger.debug(f"{logits.shape = }, {inputs['token_ids'].shape = }")
     raw_loss = torch.nn.functional.cross_entropy(
-        einops.rearrange(logits, "b seq_len vocab -> b vocab seq_len"),
+        # NOTE: a simple rearrange is not appropriate here! we need to permute the dimensions.
+        # see here for why: https://discuss.pytorch.org/t/for-beginners-do-not-use-view-or-reshape-to-swap-dimensions-of-tensors/75524
+        # DONT: einops.rearrange(logits, "b seq_len vocab -> b vocab seq_len"),
+        # DO:
+        torch.permute(logits, (0, 2, 1)),
         inputs["token_ids"],
         reduction="none",
     )
@@ -358,12 +427,15 @@ def compute_masked_loss(
         )
 
         masked_loss = raw_loss * batch_label_mask
+
         if return_outputs:
             # softmax + argmax leads to (b, seq_len, |V|) -> (b, seq_len)
-            return masked_loss, torch.nn.functional.softmax(logits, dim=-1).argmax(-1)
+            return masked_loss.mean(), torch.nn.functional.softmax(
+                logits, dim=-1
+            ).argmax(-1)
 
         return masked_loss.mean()
 
     except KeyError:
-        raise ValueError("inputs must contain a key `answer_locations`")
+        raise ValueError("inputs must contain a key for `answer_locations`")
         masked_loss = raw_loss  # don't apply a label mask
