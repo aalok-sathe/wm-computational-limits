@@ -19,8 +19,9 @@ from workingmem.model import (
 )
 from workingmem.task import SIRDataset, SIRConfig
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+logging.basicConfig()
+logger = logging.getLogger("workingmem")
+logger.setLevel(logging.DEBUG)
 
 
 @dataclasses.dataclass

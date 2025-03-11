@@ -3,6 +3,7 @@ This file houses classes and functions for the Store-Ignore-Recall (SIR) task
 """
 
 # stdlib
+import os
 from dataclasses import dataclass
 import typing
 import logging
@@ -22,7 +23,9 @@ from workingmem.task.interface import (
 )
 
 
-logger = logging.getLogger(__name__)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+logger = logging.getLogger("workingmem")
 
 
 @dataclass
@@ -60,9 +63,9 @@ class SIRConfig(GeneratedCachedDatasetConfig):
         store/ignore instruction"""
 
     # seed: int = None
-    n_train: int = 1_000
-    n_val: int = 500
-    n_test: int = 500
+    n_train: int = 500
+    n_val: int = 100
+    n_test: int = 100
 
 
 # Create a custom tokenizer class by extending PreTrainedTokenizerFast

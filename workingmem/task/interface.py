@@ -10,7 +10,7 @@ import tokenizers
 import torch
 import yaml
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("workingmem")
 
 
 @dataclasses.dataclass
