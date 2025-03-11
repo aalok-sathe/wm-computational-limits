@@ -57,7 +57,7 @@ class ModelConfig:
 
 @dataclasses.dataclass
 class TrainingConfig:
-    epochs: int = 50
+    epochs: int = 10
     # optimizer: str = "adamw" # we are going to take this for granted
     learning_rate: float = 5e-5
     weight_decay: float = 0.0003
@@ -147,7 +147,7 @@ class ModelWrapper(ABC):
         predictions_table = wandb.Table(
             columns=[
                 "epoch",  # so that we can observe the evolution of the model's predictions over time
-                "eval_step",  # this is the step within the training epoch
+                "example_ix",
                 "eval_example",
                 "eval_prediction",
                 "eval_labels",
@@ -207,6 +207,9 @@ class ModelWrapper(ABC):
                 )
                 logger.debug(f"{wandb_logged = }")
 
+        if predictions_table is not None:
+            wandb.log({"predictions": predictions_table})
+
     def evaluate(
         self,
         dataset: GeneratedCachedDataset,
@@ -228,7 +231,7 @@ class ModelWrapper(ABC):
 
         eval_dataloader = DataLoader(
             dataset,
-            batch_size=16,  # TODO, should we parameterize this?
+            batch_size=1,  # TODO, should we parameterize this?
             shuffle=False,
             num_workers=1,
             pin_memory=True,
@@ -259,24 +262,61 @@ class ModelWrapper(ABC):
                     #     "eval_labels",
                     #     "logits",  # logits will be a seq_len x |V| heatmap for each example
                     # ]
-                    predictions_table.add_data(
-                        train_epoch,
-                        eval_step,
-                        inputs["tokens"],
-                        dataset.tokenizer.decode_batch(
-                            answers.detach().tolist()
-                        ),  # answers.tolist(),
-                        dataset.tokenizer.decode_batch(labels.detach().tolist()),
-                        wandb.Image(
-                            plt.imshow(
-                                torch.vstack((*answer_logits,)).detach().numpy(),
-                                cmap="Reds",
-                                origin="lower",
-                                interpolation="none",
-                                aspect="auto",
+
+                    # b, num_answers, |V|
+                    vocab_dict = dataset.tokenizer.get_vocab()
+                    id2token = {v: k for k, v in vocab_dict.items()}
+
+                    def logit_to_dict(logit: torch.Tensor):
+                        """
+                        opearates on a 1-D tensor of logits
+                        """
+                        if logit.shape != (max(vocab_dict.values()) + 1,):
+                            raise ValueError(
+                                f"logit must be a 1-D tensor of logits equal to {max(vocab_dict.values())+1 = }. received: {logit.shape = }"
                             )
-                        ),
+                        d = {id2token[i]: float(logit[i]) for i in id2token}
+                        # sort d by values and keep the top 10
+                        return str(
+                            dict(
+                                sorted(
+                                    d.items(),
+                                    key=lambda x: x[1] if x[0] not in "samediff" else 1,
+                                    reverse=True,
+                                )[:12]
+                            )
+                        )
+
+                    # b, num_answers, |V|
+                    prob_matrix = (
+                        torch.nn.functional.softmax(answer_logits, dim=-1)
+                        .cpu()
+                        .detach()
+                        .numpy()
                     )
+                    # b x num_answers dictionaries
+                    prob_dicts = []
+                    for b in range(prob_matrix.shape[0]):
+                        this_prob_dicts = []
+                        for ans_ix in range(prob_matrix.shape[1]):
+                            this_prob_dicts += [logit_to_dict(prob_matrix[b, ans_ix])]
+                        prob_dicts.append(this_prob_dicts)
+
+                    for example_ix in range(len(inputs["tokens"])):
+                        predictions_table.add_data(
+                            train_epoch,
+                            example_ix,  # corresponds to batch
+                            inputs["tokens"][example_ix],
+                            dataset.tokenizer.decode(
+                                answers[example_ix].detach().tolist()
+                            ),
+                            dataset.tokenizer.decode(
+                                labels[example_ix].detach().tolist()
+                            ),
+                            prob_dicts[
+                                example_ix
+                            ],  # explicit probability distribution over vocabulary
+                        )
 
         return (
             np.mean(losses),
@@ -311,12 +351,21 @@ class ModelWrapper(ABC):
             # timestep anyway---there is absolutely no pressure for the model to produce
             # anything in particular at the locations that are not answer locations, so
             # I wonder)
-            loss, answers = compute_masked_loss(
-                logits, inputs, return_outputs=return_outputs
+            outputs = compute_masked_loss(logits, inputs, return_outputs=return_outputs)
+            loss, gathered_logits, gathered_answers, gathered_labels = (
+                outputs["loss"],
+                outputs["gathered_logits"],
+                outputs["gathered_answers"],
+                outputs["gathered_labels"],
             )
 
             logger.debug(f"{loss.shape = }, {inputs['token_ids'].shape = }")
-            logger.debug(f"{answers.shape = }, {inputs['answer_locations'].shape = }")
+            logger.debug(
+                f"{gathered_answers.shape = }, {inputs['answer_locations'].shape = }"
+            )
+            logger.debug(
+                f"{gathered_logits.shape = }, {gathered_answers.shape = }, {gathered_labels.shape = }"
+            )
 
             # convert the boolean mask inputs['answer_locations'] to indices
             # and gather the answers at those locations
@@ -324,58 +373,58 @@ class ModelWrapper(ABC):
             # ~ ~N~O~T~E~ ~t~h~i~s~ ~w~i~l~l~ ~n~o~t~ ~w~o~r~k~ ~i~f~ ~e~a~c~h~ ~e~x~a~m~p~l~e~ ~h~a~s~ ~a~ ~d~i~f~f~e~r~e~n~t~ ~a~n~s~w~e~r~_~l~o~c~a~t~i~o~n~s~ ~s~h~a~p~e~!~!~!~
             # ~ ~b~u~t~ ~i~t~ ~i~s~ ~O~K~ ~t~o~ ~m~a~k~e~ ~t~h~a~t~ ~a~s~s~u~m~p~t~i~o~n
             # length of `answer_indices_1d`: b x O(seq_len)
-            answer_indices_1d = (
-                inputs["answer_locations"]
-                .reshape(-1)
-                .nonzero(as_tuple=False)
-                .reshape(-1)
-            )
+            # answer_indices_1d = (
+            #     inputs["answer_locations"]
+            #     .reshape(-1)
+            #     .nonzero(as_tuple=False)
+            #     .reshape(-1)
+            # )
 
-            logger.debug(f"{answer_indices_1d.shape = }")
+            # logger.debug(f"{answer_indices_1d.shape = }")
 
-            # then, the gathering answers (post argmax-softmax logits)
-            gathered_answers_1d = torch.gather(
-                answers.reshape(-1), dim=0, index=answer_indices_1d
-            )
-            gathered_true_labels_1d = torch.gather(
-                inputs["token_ids"].reshape(-1), dim=0, index=answer_indices_1d
-            )
-            # we preserve the vocab dimension on logits
-            gathered_logits_2d = einops.rearrange(
-                logits, "b seq_len vocab -> (b seq_len) vocab"
-            )[answer_indices_1d, :]
+            # # then, the gathering answers (post argmax-softmax logits)
+            # gathered_answers_1d = torch.gather(
+            #     answers.reshape(-1), dim=0, index=answer_indices_1d
+            # )
+            # gathered_true_labels_1d = torch.gather(
+            #     inputs["token_ids"].reshape(-1), dim=0, index=answer_indices_1d
+            # )
+            # # we preserve the vocab dimension on logits
+            # gathered_logits_2d = einops.rearrange(
+            #     logits, "b seq_len vocab -> (b seq_len) vocab"
+            # )[answer_indices_1d, :]
 
-            gathered_answers = gathered_answers_1d.reshape(
-                # b, O(seq_len)
-                *inputs["answer_locations"].shape[:-1],
-                -1,
-            )
-            gathered_true_labels = gathered_true_labels_1d.reshape(
-                # b, O(seq_len)
-                *inputs["answer_locations"].shape[:-1],
-                -1,
-            )
+            # gathered_answers = gathered_answers_1d.reshape(
+            #     # b, O(seq_len)
+            #     *inputs["answer_locations"].shape[:-1],
+            #     -1,
+            # )
+            # gathered_true_labels = gathered_true_labels_1d.reshape(
+            #     # b, O(seq_len)
+            #     *inputs["answer_locations"].shape[:-1],
+            #     -1,
+            # )
 
-            # NOTE: this reshape won't be possible if the number of answers per example is not the same across examples
-            # b, num_answers_per_eg, |V|
-            gathered_logits = gathered_logits_2d.reshape(
-                inputs["answer_locations"].shape[0],
-                -1,  # whatever the number of answers per example is
-                logits.shape[-1],
-            )
+            # # NOTE: this reshape won't be possible if the number of answers per example is not the same across examples
+            # # b, num_answers_per_eg, |V|
+            # gathered_logits = gathered_logits_2d.reshape(
+            #     inputs["answer_locations"].shape[0],
+            #     -1,  # whatever the number of answers per example is
+            #     logits.shape[-1],
+            # )
 
-            batch_size = inputs["answer_locations"].shape[0]
-            answer_seq_len = len(answer_indices_1d) / batch_size
-            vocab_size = logits.shape[-1]
+            # batch_size = inputs["answer_locations"].shape[0]
+            # answer_seq_len = len(answer_indices_1d) / batch_size
+            # vocab_size = logits.shape[-1]
 
-            assert gathered_answers.shape == (batch_size, answer_seq_len)
-            assert gathered_logits.shape == (batch_size, answer_seq_len, vocab_size)
+            # assert gathered_answers.shape == (batch_size, answer_seq_len)
+            # assert gathered_logits.shape == (batch_size, answer_seq_len, vocab_size)
 
-            logger.debug(
-                f"{gathered_answers.shape = }, {gathered_true_labels.shape = }, {gathered_logits.shape = }"
-            )
+            # logger.debug(
+            #     f"{gathered_answers.shape = }, {gathered_true_labels.shape = }, {gathered_logits.shape = }"
+            # )
 
-            return loss, gathered_logits, gathered_answers, gathered_true_labels
+            return loss, gathered_logits, gathered_answers, gathered_labels
         else:
             loss = compute_masked_loss(logits, inputs, return_outputs=return_outputs)
             return loss
@@ -386,7 +435,7 @@ def compute_masked_loss(
     inputs: typing.Dict[str, torch.Tensor],
     # label_mask: torch.Tensor = None,
     return_outputs=False,
-    return_logits=False,
+    # return_logits=False,
 ) -> typing.Union[torch.Tensor, typing.Dict[str, torch.Tensor]]:
     """
     this method acts on:
@@ -405,37 +454,55 @@ def compute_masked_loss(
     # logits have the shape (b, seq_len, |V|)
     b, seq_len, vocab_size = logits.shape
     # logger.debug(f"{logits.shape = }, {inputs['token_ids'].shape = }")
-    raw_loss = torch.nn.functional.cross_entropy(
+    gathered_logits = logits[
+        :, inputs["answer_locations"][0].nonzero(as_tuple=True)[0] - 1, :
+    ]
+    gathered_labels = inputs["token_ids"][
+        :, inputs["answer_locations"][0].nonzero(as_tuple=True)[0]
+    ]
+
+    logger.debug(
+        f"in COMPUTE_MASKED_LOSS: {gathered_logits.shape = }, {gathered_labels.shape = }"
+    )
+    # logger.debug(gathered_answers)
+
+    loss = torch.nn.functional.cross_entropy(
         # NOTE: a simple rearrange is not appropriate here! we need to permute the dimensions.
         # see here for why: https://discuss.pytorch.org/t/for-beginners-do-not-use-view-or-reshape-to-swap-dimensions-of-tensors/75524
         # DONT: einops.rearrange(logits, "b seq_len vocab -> b vocab seq_len"),
         # DO:
-        torch.permute(logits, (0, 2, 1)),
-        inputs["token_ids"],
-        reduction="none",
+        torch.permute(gathered_logits, (0, 2, 1)),
+        gathered_labels,
+        reduction="mean",
     )
+
+    if return_outputs:
+        return dict(
+            loss=loss,
+            gathered_logits=gathered_logits,
+            gathered_answers=torch.nn.functional.softmax(
+                gathered_logits, dim=-1
+            ).argmax(-1),
+            gathered_labels=gathered_labels,
+        )
+    return loss
 
     # logger.debug(f"{raw_loss.shape = }, {raw_loss[0] = }")
 
     # after crossentropy, `raw_loss` should have the shape (b, seq_len)
     assert raw_loss.shape == (b, seq_len)
 
-    try:
-        batch_label_mask = torch.concat(
-            (inputs["answer_locations"][:, 1:], inputs["answer_locations"][:, :1]),
-            dim=1,
+    batch_label_mask = torch.concat(
+        (inputs["answer_locations"][:, 1:], inputs["answer_locations"][:, :1]),
+        dim=1,
+    )
+
+    masked_loss = raw_loss * batch_label_mask
+
+    if return_outputs:
+        # softmax + argmax leads to (b, seq_len, |V|) -> (b, seq_len)
+        return masked_loss.mean(), torch.nn.functional.softmax(logits, dim=-1).argmax(
+            -1
         )
 
-        masked_loss = raw_loss * batch_label_mask
-
-        if return_outputs:
-            # softmax + argmax leads to (b, seq_len, |V|) -> (b, seq_len)
-            return masked_loss.mean(), torch.nn.functional.softmax(
-                logits, dim=-1
-            ).argmax(-1)
-
-        return masked_loss.mean()
-
-    except KeyError:
-        raise ValueError("inputs must contain a key for `answer_locations`")
-        masked_loss = raw_loss  # don't apply a label mask
+    return masked_loss.mean()
