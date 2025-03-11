@@ -243,10 +243,11 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         if isinstance(path, str):
             dest = Path(path).expanduser().resolve()
             if not dest.exists():
-                dest = Path()
-        config = GeneratedCachedDatasetConfig(
-            **yaml.load(dest / "config.yaml", Loader=yaml.SafeLoader)
-        )
+                raise FileNotFoundError(f"{dest} does not exist")
+        with (dest / "config.yaml").open("r") as f:
+            config = GeneratedCachedDatasetConfig(
+                **yaml.load(f, Loader=yaml.SafeLoader)
+            )
         instance = cls(config)
 
         return instance
