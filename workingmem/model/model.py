@@ -142,7 +142,9 @@ class ModelWrapper(ABC):
 
             @property
             def step(self):
-                return self.epoch_step + self.epoch * len(dataset)
+                return self.epoch_step + np.ceil(
+                    self.epoch * len(dataset) / training_config.batch_size
+                )
 
         predictions_table = wandb.Table(
             columns=[
@@ -151,7 +153,7 @@ class ModelWrapper(ABC):
                 "eval_example",
                 "eval_prediction",
                 "eval_labels",
-                "logits",  # logits will be a |V| x seq_len heatmap for each example
+                # "logits",
             ]
         )
 
@@ -287,20 +289,20 @@ class ModelWrapper(ABC):
                             )
                         )
 
-                    # b, num_answers, |V|
-                    prob_matrix = (
-                        torch.nn.functional.softmax(answer_logits, dim=-1)
-                        .cpu()
-                        .detach()
-                        .numpy()
-                    )
-                    # b x num_answers dictionaries
-                    prob_dicts = []
-                    for b in range(prob_matrix.shape[0]):
-                        this_prob_dicts = []
-                        for ans_ix in range(prob_matrix.shape[1]):
-                            this_prob_dicts += [logit_to_dict(prob_matrix[b, ans_ix])]
-                        prob_dicts.append(this_prob_dicts)
+                    # # b, num_answers, |V|
+                    # prob_matrix = (
+                    #     torch.nn.functional.softmax(answer_logits, dim=-1)
+                    #     .cpu()
+                    #     .detach()
+                    #     .numpy()
+                    # )
+                    # # b x num_answers dictionaries
+                    # prob_dicts = []
+                    # for b in range(prob_matrix.shape[0]):
+                    #     this_prob_dicts = []
+                    #     for ans_ix in range(prob_matrix.shape[1]):
+                    #         this_prob_dicts += [logit_to_dict(prob_matrix[b, ans_ix])]
+                    #     prob_dicts.append(this_prob_dicts)
 
                     for example_ix in range(len(inputs["tokens"])):
                         predictions_table.add_data(
@@ -313,9 +315,9 @@ class ModelWrapper(ABC):
                             dataset.tokenizer.decode(
                                 labels[example_ix].detach().tolist()
                             ),
-                            prob_dicts[
-                                example_ix
-                            ],  # explicit probability distribution over vocabulary
+                            # prob_dicts[
+                            #     example_ix
+                            # ],  # explicit probability distribution over vocabulary
                         )
 
         return (
@@ -486,23 +488,3 @@ def compute_masked_loss(
             gathered_labels=gathered_labels,
         )
     return loss
-
-    # logger.debug(f"{raw_loss.shape = }, {raw_loss[0] = }")
-
-    # after crossentropy, `raw_loss` should have the shape (b, seq_len)
-    assert raw_loss.shape == (b, seq_len)
-
-    batch_label_mask = torch.concat(
-        (inputs["answer_locations"][:, 1:], inputs["answer_locations"][:, :1]),
-        dim=1,
-    )
-
-    masked_loss = raw_loss * batch_label_mask
-
-    if return_outputs:
-        # softmax + argmax leads to (b, seq_len, |V|) -> (b, seq_len)
-        return masked_loss.mean(), torch.nn.functional.softmax(logits, dim=-1).argmax(
-            -1
-        )
-
-    return masked_loss.mean()

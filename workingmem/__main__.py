@@ -21,7 +21,7 @@ from workingmem.task import SIRDataset, SIRConfig
 
 logging.basicConfig()
 logger = logging.getLogger("workingmem")
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
 
 @dataclasses.dataclass
