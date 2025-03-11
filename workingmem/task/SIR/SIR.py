@@ -161,6 +161,7 @@ class SIRDataset(GeneratedCachedDataset):
     data: SupportsGetitem
     trial_label_mask: tuple = (0, 0, 0, 1)
     # use_bos_token: bool = True # alternatively, we just suck it up and handle the offset on the model side
+    config_class = SIRConfig
 
     def __init__(
         self,
