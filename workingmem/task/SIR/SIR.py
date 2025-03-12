@@ -63,9 +63,9 @@ class SIRConfig(GeneratedCachedDatasetConfig):
         store/ignore instruction"""
 
     # seed: int = None
-    n_train: int = 500
-    n_val: int = 100
-    n_test: int = 100
+    n_train: int = 10000
+    n_val: int = 1000
+    n_test: int = 1000
 
 
 # Create a custom tokenizer class by extending PreTrainedTokenizerFast

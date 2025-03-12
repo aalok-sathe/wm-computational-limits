@@ -21,7 +21,7 @@ from workingmem.task import SIRDataset, SIRConfig
 
 logging.basicConfig()
 logger = logging.getLogger("workingmem")
-# logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 @dataclasses.dataclass
@@ -64,11 +64,14 @@ if __name__ == "__main__":
     logger.info("loading the dataset")
     train_dataset = SIRDataset(config.dataset)
     eval_config = SIRConfig(**dataclasses.asdict(config.dataset))
-    eval_config.split = "val"
+    test_config = SIRConfig(**dataclasses.asdict(config.dataset))
+    eval_config.split, test_config.split = "val", "test"
     eval_dataset = SIRDataset(eval_config)
+    test_dataset = SIRDataset(test_config)
 
     logger.info("train dataset size: %s", len(train_dataset))
     logger.info("eval dataset size: %s", len(eval_dataset))
+    logger.info("test dataset size: %s", len(test_dataset))
 
     # set up the model
     logger.info("initializing model")
@@ -82,6 +85,11 @@ if __name__ == "__main__":
     if config.dataset.split == "train":
         # train the model
         logger.info("Training the model")
-        model.train(train_dataset, config.trainer, eval_dataset=eval_dataset)
+        model.train(
+            train_dataset,
+            config.trainer,
+            eval_dataset=eval_dataset,
+            test_dataset=test_dataset,
+        )
 
         logger.info("Finished.")

@@ -57,7 +57,7 @@ class ModelConfig:
 
 @dataclasses.dataclass
 class TrainingConfig:
-    epochs: int = 10
+    epochs: int = 50
     # optimizer: str = "adamw" # we are going to take this for granted
     learning_rate: float = 5e-5
     weight_decay: float = 0.0003
@@ -68,6 +68,8 @@ class TrainingConfig:
     logging_steps: int = 1  # log every epoch
     save_strategy: str = "epoch"
     save_steps: int = None
+
+    do_test: bool = True
 
 
 class ModelWrapper(ABC):
@@ -120,6 +122,7 @@ class ModelWrapper(ABC):
         dataset: GeneratedCachedDataset,
         training_config: TrainingConfig,
         eval_dataset: GeneratedCachedDataset = None,
+        test_dataset: GeneratedCachedDataset = None,
     ):
         """
         given an `eval_dataset`, periodically evaluates model on eval_dataset and logs the results
@@ -137,8 +140,8 @@ class ModelWrapper(ABC):
         class TrainingState:
             epoch: int = 0
             epoch_step: int = 0
-            best_val_loss: float = np.inf
-            best_val_epoch: int = 0
+            # best_val_loss: float = np.inf
+            # best_val_epoch: int = 0
 
             @property
             def step(self):
@@ -211,6 +214,33 @@ class ModelWrapper(ABC):
 
         if predictions_table is not None:
             wandb.log({"predictions": predictions_table})
+
+        if training_config.do_test and test_dataset is not None:
+            test_table = wandb.Table(
+                columns=[
+                    "epoch",  # so that we can observe the evolution of the model's predictions over time
+                    "test_step",  # this is the step within the training epoch
+                    "test_example",
+                    "test_prediction",
+                    "test_labels",
+                ]
+            )
+            test_loss, test_acc = self.test(test_dataset, test_table)
+            logger.info(f"TEST: {test_loss = }, {test_acc = }")
+            wandb.log(
+                {"epoch": state.epoch, "test_loss": test_loss, "test_acc": test_acc}
+            )
+            if test_table is not None:
+                wandb.log({"test_predictions": test_table})
+
+    def test(
+        self, dataset: GeneratedCachedDataset, test_predictions_table: wandb.Table
+    ):
+        """
+        evaluates the model on the test set
+        """
+        loss, acc = self.evaluate(dataset, predictions_table=test_predictions_table)
+        return loss, acc
 
     def evaluate(
         self,
@@ -369,63 +399,6 @@ class ModelWrapper(ABC):
                 f"{gathered_logits.shape = }, {gathered_answers.shape = }, {gathered_labels.shape = }"
             )
 
-            # convert the boolean mask inputs['answer_locations'] to indices
-            # and gather the answers at those locations
-            # first, the conversion to indices:
-            # ~ ~N~O~T~E~ ~t~h~i~s~ ~w~i~l~l~ ~n~o~t~ ~w~o~r~k~ ~i~f~ ~e~a~c~h~ ~e~x~a~m~p~l~e~ ~h~a~s~ ~a~ ~d~i~f~f~e~r~e~n~t~ ~a~n~s~w~e~r~_~l~o~c~a~t~i~o~n~s~ ~s~h~a~p~e~!~!~!~
-            # ~ ~b~u~t~ ~i~t~ ~i~s~ ~O~K~ ~t~o~ ~m~a~k~e~ ~t~h~a~t~ ~a~s~s~u~m~p~t~i~o~n
-            # length of `answer_indices_1d`: b x O(seq_len)
-            # answer_indices_1d = (
-            #     inputs["answer_locations"]
-            #     .reshape(-1)
-            #     .nonzero(as_tuple=False)
-            #     .reshape(-1)
-            # )
-
-            # logger.debug(f"{answer_indices_1d.shape = }")
-
-            # # then, the gathering answers (post argmax-softmax logits)
-            # gathered_answers_1d = torch.gather(
-            #     answers.reshape(-1), dim=0, index=answer_indices_1d
-            # )
-            # gathered_true_labels_1d = torch.gather(
-            #     inputs["token_ids"].reshape(-1), dim=0, index=answer_indices_1d
-            # )
-            # # we preserve the vocab dimension on logits
-            # gathered_logits_2d = einops.rearrange(
-            #     logits, "b seq_len vocab -> (b seq_len) vocab"
-            # )[answer_indices_1d, :]
-
-            # gathered_answers = gathered_answers_1d.reshape(
-            #     # b, O(seq_len)
-            #     *inputs["answer_locations"].shape[:-1],
-            #     -1,
-            # )
-            # gathered_true_labels = gathered_true_labels_1d.reshape(
-            #     # b, O(seq_len)
-            #     *inputs["answer_locations"].shape[:-1],
-            #     -1,
-            # )
-
-            # # NOTE: this reshape won't be possible if the number of answers per example is not the same across examples
-            # # b, num_answers_per_eg, |V|
-            # gathered_logits = gathered_logits_2d.reshape(
-            #     inputs["answer_locations"].shape[0],
-            #     -1,  # whatever the number of answers per example is
-            #     logits.shape[-1],
-            # )
-
-            # batch_size = inputs["answer_locations"].shape[0]
-            # answer_seq_len = len(answer_indices_1d) / batch_size
-            # vocab_size = logits.shape[-1]
-
-            # assert gathered_answers.shape == (batch_size, answer_seq_len)
-            # assert gathered_logits.shape == (batch_size, answer_seq_len, vocab_size)
-
-            # logger.debug(
-            #     f"{gathered_answers.shape = }, {gathered_true_labels.shape = }, {gathered_logits.shape = }"
-            # )
-
             return loss, gathered_logits, gathered_answers, gathered_labels
         else:
             loss = compute_masked_loss(logits, inputs, return_outputs=return_outputs)
@@ -435,9 +408,7 @@ class ModelWrapper(ABC):
 def compute_masked_loss(
     logits: torch.Tensor,
     inputs: typing.Dict[str, torch.Tensor],
-    # label_mask: torch.Tensor = None,
     return_outputs=False,
-    # return_logits=False,
 ) -> typing.Union[torch.Tensor, typing.Dict[str, torch.Tensor]]:
     """
     this method acts on:
@@ -445,13 +416,20 @@ def compute_masked_loss(
         - `inputs` is the dictionary of tensors supplied to the model, which includes the key `input_ids`
             and `answer_locations` which provides a 0-1 mask over which tokens in the sequence should be
             considered 'predictions' (only these are used for loss computation)
-        - `label_mask` is a tensor of the same shape as `inputs["labels"]` which is used to mask out
-            the locations that don't correspond to a label and that we don't want to use to compute the loss
-            (e.g., in the SIR task, the instruction, register, and symbol components are fully stochastic, and
-            would only make the learning problem harder if the model tried to predict them)
-            if None, no mask is applied, and loss is computed at every location same as a language modeling head
-        - `return_outputs` will cause the method to return the outputs of the model as softmaxed and argmaxed logits
-            so they can be directly compared with input_ids
+        - `return_outputs` will cause the method to return the gathered logits, argmax-softmaxed logit answers, and true labels
+            all as a dictionary with the keys loss, gathered_logits, gathered_answers, gathered_labels
+
+    Example:
+    --------
+    ```python
+    outputs = compute_masked_loss(logits, inputs, return_outputs=True)
+        loss, gathered_logits, gathered_answers, gathered_labels = (
+            outputs["loss"],
+            outputs["gathered_logits"],
+            outputs["gathered_answers"],
+            outputs["gathered_labels"],
+        )
+    ```
     """
     # logits have the shape (b, seq_len, |V|)
     b, seq_len, vocab_size = logits.shape
