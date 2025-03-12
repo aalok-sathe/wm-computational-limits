@@ -58,7 +58,7 @@ class ModelConfig:
 @dataclasses.dataclass
 class TrainingConfig:
     epochs: int = 50
-    # optimizer: str = "adamw" # we are going to take this for granted
+    optimizer: str = "adamw"  # do not change this!
     learning_rate: float = 5e-5
     weight_decay: float = 0.0003
     output_dir: str = "output"

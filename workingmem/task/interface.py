@@ -19,7 +19,7 @@ class GeneratedCachedDatasetConfig:
     configuration for a `GeneratedCachedDataset` instance
     """
 
-    split: typing.Literal["train", "val", "test"]
+    split: typing.Literal["train", "val", "test"] = "train"
     """the split of the dataset to use. if no data already exists on disk,
     data is generated for all splits (we need to make sure all examples
     are unique and non-repeating across splits). if data already exists
