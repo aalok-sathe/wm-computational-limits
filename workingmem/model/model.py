@@ -40,6 +40,7 @@ class ModelConfig:
     act_fn: str = "relu"
     d_vocab: int = None  # vocab is determined by the tokenizer
     init_weights: bool = True
+    seed: typing.Union[int, None] = None
     # checkpoint_dir: typing.Union[Path, None] = None
     # from_checkpoint: typing.Union[Path, None] = None
 
@@ -200,6 +201,8 @@ class ModelWrapper(ABC):
                     # logging predictions and heatmaps over logits
                     predictions_table=predictions_table,
                 )
+
+                logger.info(f"EVAL: {eval_loss = }, {eval_acc = }")
 
                 wandb.log(
                     wandb_logged := {
@@ -371,10 +374,11 @@ class ModelWrapper(ABC):
         # iterating over the dataset. the dataset doesn't automatically batch inputs.
         # do we need to use a data collator here?
 
-        tokens = inputs["token_ids"]
-        tokens.to(self.device)
+        inputs["answer_locations"] = inputs["answer_locations"].to(self.device)
+        inputs["token_ids"] = inputs["token_ids"].to(self.device)
+
         # shape of logits: (b, seq_len, |V|)
-        logits = self.model(tokens)
+        logits = self.model(inputs["token_ids"])
 
         if return_outputs:
             # answers is of the shape (b, seq_len), and we are only going to use
