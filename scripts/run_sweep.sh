@@ -6,7 +6,7 @@
 #SBATCH -p 3090-gcondo --gres=gpu:1
 #SBATCH --mem-per-cpu 20G
 
-#SBATCH -a 1-10%10
+#SBATCH -a 1-20%10
 #SBATCH -t 2:00:00 ##shorter time because fewer training examples
 #SBATCH -o batch-output/training_run_%A_%a.out
 
@@ -18,4 +18,4 @@ echo "find sample run at batch-output/training_run_%A_1.out"
 
 
 #Sweep 1 (You probably want to provide some documentation here so you remember what the sweep does without having to sift through the overview)
-python3 -m workingmem  --wandb.run_as_agent --wandb.sweep_id aloxatel/wm-comp-limit-0/phbpquce
+python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/6d4tifhz

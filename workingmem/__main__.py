@@ -1,3 +1,7 @@
+"""
+run as: python -m workingmem
+"""
+
 #!/usr/bin/env python3
 import typing
 import dataclasses
@@ -7,6 +11,7 @@ from collections import defaultdict
 # 3rd party packages
 import tyro
 import wandb
+from dacite import from_dict
 
 # local
 from workingmem.model import (
@@ -24,11 +29,14 @@ logger.setLevel(logging.INFO)
 @dataclasses.dataclass
 class WandbConfig:
     create_sweep: bool = False
-    run_as_agent: bool = True
+    run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
     project_name: str = "wm-comp-limit-0"
     method: str = "random"
-    metric = {"goal": "minimize", "name": "eval_loss"}
+    metric: dict = dataclasses.field(
+        default_factory=lambda: {"goal": "minimize", "name": "eval_loss"}
+    )
+    program: str = "run_wm.py"
 
 
 @dataclasses.dataclass
@@ -66,12 +74,14 @@ def main(config: MainConfig):
     given a config, train a model on an SIR dataset, evaluate, and test, all described
     as per config. wandb is used for logging regardless of sweep or not.
     """
+    logger.info(f"running main with config: {config}")
+    wandb.init(project=config.wandb.project_name, config=config)
 
     # set up the dataset
     logger.info("loading datasets")
     train_dataset = SIRDataset(config.dataset)
-    eval_config = SIRConfig(**dataclasses.asdict(config.dataset))
-    test_config = SIRConfig(**dataclasses.asdict(config.dataset))
+    eval_config = from_dict(SIRConfig, dataclasses.asdict(config.dataset))
+    test_config = from_dict(SIRConfig, dataclasses.asdict(config.dataset))
     eval_config.split, test_config.split = "val", "test"
     eval_dataset = SIRDataset(eval_config)
     test_dataset = SIRDataset(test_config)
@@ -115,19 +125,25 @@ if __name__ == "__main__":
                     "model.n_layers": {"value": 2},
                     "model.n_heads": {"value": 2},
                     "model.d_model": {"value": 128},
+                    "model.seed": {"values": [42, 43, 44, 45]},
                     # trainer parameters
                     "trainer.batch_size": {"value": 16},
-                    "trainer.epochs": {"value": 60},
+                    "trainer.epochs": {"value": 50},
                     "trainer.learning_rate": {
                         "distribution": "uniform",
                         "max": 1e-3,
                         "min": 1e-5,
                     },
+                    # "trainer.weight_decay": {
+                    #     "distribution": "uniform",
+                    #     "max": 1e-3,
+                    #     "min": 0,
+                    # },
                     # dataset parameters
                     "dataset.n_train": {"value": 10_000},
-                    "dataset.n_dev": {"value": 1_000},
+                    "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
-                    "dataset.concurrent_reg": {"value": 2},
+                    "dataset.concurrent_reg": {"values": [2, 3]},
                     "dataset.concurrent_items": {"value": 5},
                 },
             },
@@ -136,39 +152,37 @@ if __name__ == "__main__":
         sweep_id = wandb.sweep(sweep_config, project=config.wandb.project_name)
         logger.info(f"created sweep with id: {sweep_id} !")
 
-    elif config.wandb.run_as_agent:
+    elif config.wandb.run_sweep:
         # if we're doing a sweep, we need to update the config with the sweep values
-
-        # set up wandb
-        if config.wandb.run_as_agent:
-            wandb.agent(config.wandb.sweep_id, count=1)
-        wandb.init(project=config.wandb.project_name, config=config)
-
-        wandb_config = wandb.config
         logger.info(
-            f"running an agent part of sweep {config.wandb.sweep_id} with: {wandb_config}"
+            f"running an agent part of sweep {config.wandb.sweep_id} with: {wandb.config}"
         )
+        # set up wandb
+        wandb.agent(config.wandb.sweep_id, count=1)
 
-        def deep_dict():
-            return defaultdict(deep_dict)
+        # #################################################################
+        # # code chunk to convert dot-separated keys to nested dictionaries
+        # # borrowed with gratitude from https://stackoverflow.com/a/63545662/2434875
+        # def deep_dict():
+        #     return defaultdict(deep_dict)
 
-        cfg_dict = deep_dict()
+        # cfg_dict = deep_dict()
 
-        def deep_insert(key, value):
-            d = hybrid_config
-            keys = key.split(".")
-            for subkey in keys[:-1]:
-                d = d[subkey]
-            d[keys[-1]] = value
+        # def deep_insert(key, value, d: dict):
+        #     keys = key.split(".")
+        #     for subkey in keys[:-1]:
+        #         d = d[subkey]
+        #     d[keys[-1]] = value
 
-        for key, value in wandb_config.items():
-            deep_insert(key, value)
+        # for key, value in wandb_config.items():
+        #     deep_insert(key, value, cfg_dict)
+        # #################################################################
 
-        # we need to update some configs with the sweep values
-        hybrid_config = dataclasses.asdict(config)
-        hybrid_config.update(cfg_dict)
+        # # we need to update some configs with the sweep values
+        # hybrid_config = dataclasses.asdict(config)
+        # hybrid_config.update(cfg_dict)
 
-        main(MainConfig(**cfg_dict))
+        # main(from_dict(MainConfig, hybrid_config))
 
         # import submitit
         # executor = submitit.AutoExecutor(folder="logs/slurm_logs")
@@ -176,6 +190,6 @@ if __name__ == "__main__":
         # config_array = []
         # jobs = executor.map_array(main, config_array)  # just a list of jobs
 
-    else:
+    else:  # run as normal in a single-run fashion using wandb only for logging
         wandb.init(project=config.wandb.project_name, config=config)
         main(config)
