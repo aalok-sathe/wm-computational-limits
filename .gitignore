@@ -177,3 +177,5 @@ wandb
 datasets
 output
 scratch
+*.log
+*.out
