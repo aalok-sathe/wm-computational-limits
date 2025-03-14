@@ -63,7 +63,7 @@ class TrainingConfig:
     learning_rate: float = 5e-5
     weight_decay: float = 0.0003
     output_dir: str = "output"
-    batch_size: int = 16
+    batch_size: int = 128
 
     logging_strategy: str = "epoch"
     logging_steps: int = 1  # log every epoch

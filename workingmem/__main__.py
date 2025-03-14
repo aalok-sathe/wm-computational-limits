@@ -34,7 +34,7 @@ class WandbConfig:
     project_name: str = "wm-comp-limit-0"
     method: str = "random"
     metric: dict = dataclasses.field(
-        default_factory=lambda: {"goal": "minimize", "name": "eval_loss"}
+        default_factory=lambda: {"goal": "maximize", "name": "eval_acc"}
     )
     program: str = "run_wm.py"
 
@@ -114,7 +114,6 @@ def main(config: MainConfig):
 
 if __name__ == "__main__":
     config = tyro.cli(MainConfig)
-    logger.info(f"{config}")
 
     if config.wandb.create_sweep:
         sweep_config = dataclasses.asdict(config.wandb)
@@ -123,28 +122,26 @@ if __name__ == "__main__":
                 "parameters": {
                     # model parameters
                     "model.n_layers": {"value": 2},
-                    "model.n_heads": {"value": 2},
-                    "model.d_model": {"value": 128},
-                    "model.seed": {"values": [42, 43, 44, 45]},
+                    "model.n_heads": {"values": [2]},
+                    "model.d_model": {"values": [128]},
+                    # "model.seed": {"values": [42, 43, 44, 45]},
                     # trainer parameters
-                    "trainer.batch_size": {"value": 16},
-                    "trainer.epochs": {"value": 50},
-                    "trainer.learning_rate": {
-                        "distribution": "uniform",
-                        "max": 1e-3,
-                        "min": 1e-5,
-                    },
-                    # "trainer.weight_decay": {
-                    #     "distribution": "uniform",
-                    #     "max": 1e-3,
-                    #     "min": 0,
-                    # },
+                    "trainer.batch_size": {"value": 128},
+                    "trainer.epochs": {"value": 60},
+                    "trainer.learning_rate": {"value": 1e-3},
+                    "trainer.weight_decay": {"value": 3e-5},
                     # dataset parameters
                     "dataset.n_train": {"value": 10_000},
                     "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
+                    "dataset.seq_len": {"value": 50},
                     "dataset.concurrent_reg": {"values": [2, 3]},
-                    "dataset.concurrent_items": {"value": 5},
+                    "dataset.concurrent_items": {"value": 3},
+                    "dataset.n_reg": {"values": [50]},
+                    "dataset.n_items": {"value": 50},
+                    "dataset.heldout_reg": {"value": 0},
+                    "dataset.heldout_items": {"value": 0},
+                    "dataset.ignore_prob": {"value": 0.5},
                 },
             },
         )
