@@ -56,7 +56,7 @@ class SIRConfig(GeneratedCachedDatasetConfig):
         TODO: option to manipulate locality of train/test split. alternatively, we could
         do this evaluation using a separate dataset with the locality parameter relaxed
         (which should make the test data OOD)"""
-    ignore_prob: float = 0.3
+    ignore_prob: float = 0.5
     """probability of an ignore instruction"""
     same_diff_prob: float = 0.5
     """probability of a 'same' outcome on a particular register. varies independently of
@@ -312,7 +312,11 @@ class SIRDataset(GeneratedCachedDataset):
                 reg_state[this_reg_idx] == -1
                 or np.random.rand() > self.config.same_diff_prob
             ):
+                # NOTE this line by itself doesn't guarantee that the item is new
                 this_item = np.random.choice(items_chosen, p=None)
+                # so we need this follow-up loop to keep drawing until it's new
+                while this_item == reg_state[this_reg_idx]:
+                    this_item = np.random.choice(items_chosen, p=None)
                 this_label = diff
             else:
                 this_item = reg_state[this_reg_idx]
@@ -330,7 +334,7 @@ class SIRDataset(GeneratedCachedDataset):
             # step 6
             # update the register with the new item if the instruction is not ignore
             if this_instr != ignore:
-                # doesn't matter if it's the same or a new item
+                # doesn't matter if it's the same or a new item; we update
                 reg_state[this_reg_idx] = this_item
 
         return {
