@@ -63,9 +63,9 @@ class SIRConfig(GeneratedCachedDatasetConfig):
         store/ignore instruction"""
 
     # seed: int = None
-    n_train: int = 10000
-    n_val: int = 1000
-    n_test: int = 1000
+    n_train: int = 10_000
+    n_val: int = 1_000
+    n_test: int = 1_000
 
 
 # Create a custom tokenizer class by extending PreTrainedTokenizerFast
@@ -303,7 +303,18 @@ class SIRDataset(GeneratedCachedDataset):
 
             # step 4
             # pick an instruction using ignore_prob
-            this_instr = ignore if np.random.rand() < self.config.ignore_prob else store
+            # NOTE: AMENDMENT: for short trial sequences, if 'ignore' is picked too often, we end up
+            # with a situation where labels are highly imbalanced---'diff' appears way more often than
+            # 'same' despite the `same_diff_prob` because of picking 'same' being conditioned on whether
+            # anything is already stored in the register.
+            if reg_state[this_reg_idx] == -1:
+                this_instr = (
+                    store  # force storing something in the register in the beginning
+                )
+            else:
+                this_instr = (
+                    ignore if np.random.rand() < self.config.ignore_prob else store
+                )
 
             # step 5
             # pick an item using same_diff_prob, unless there was no previous item, in which case,
