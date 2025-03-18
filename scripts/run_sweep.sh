@@ -6,8 +6,8 @@
 #SBATCH -p 3090-gcondo --gres=gpu:1
 #SBATCH --mem-per-cpu 20G
 
-#SBATCH -a 1-28%50
-#SBATCH -t 2:00:00 ##shorter time because fewer training examples
+#SBATCH -a 1-29%50
+#SBATCH -t 3:00:00 ##shorter time (2hrs) because fewer training examples if 10_000, but make it 3hrs for 100_000
 #SBATCH -o batch-output/training_run_%A_%a.out
 
 
@@ -50,4 +50,9 @@ echo "find sample run at batch-output/training_run_%A_1.out"
 # python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/iyl8lx6x
 
 # Sweep 9 same but with n_train 10_000 instead of 100_000
-python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/69f0hgsl
+# python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/69f0hgsl
+
+# Sweep 10a: n_reg 3, concurrent_reg 3, seq_len 10, n_train 100_000 (to try to match the conditions of Aneri/Aaron's experiments)
+# python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/byffj3o2
+# Sweep 10b: n_reg 2, concurrent_reg 2, seq_len 10, n_train 100_000 (to try to match the conditions of Aneri/Aaron's experiments)
+python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/

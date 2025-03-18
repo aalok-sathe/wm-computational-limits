@@ -37,7 +37,7 @@ class ModelConfig:
     n_ctx: int = 500  # this should be set so that it is definitely longer than the trial sequence length
     d_model: int = 128
     d_mlp: int = 0
-    act_fn: str = "relu"
+    act_fn: str = "relu"  # from HookedTransformerConfig: "Must be set unless using an attn-only model."
     d_vocab: int = None  # vocab is determined by the tokenizer
     init_weights: bool = True
     seed: typing.Union[int, None] = None

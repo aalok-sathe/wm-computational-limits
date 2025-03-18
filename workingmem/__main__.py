@@ -131,13 +131,13 @@ if __name__ == "__main__":
                     "trainer.learning_rate": {"value": 1e-3},
                     "trainer.weight_decay": {"value": 3e-5},
                     # dataset parameters
-                    "dataset.n_train": {"value": 10_000},
+                    "dataset.n_train": {"value": 100_000},
                     "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
-                    "dataset.seq_len": {"value": 50},
-                    "dataset.concurrent_reg": {"values": [2, 3]},
+                    "dataset.seq_len": {"value": 10},
+                    "dataset.concurrent_reg": {"values": [3]},
                     "dataset.concurrent_items": {"value": 3},
-                    "dataset.n_reg": {"values": [50]},
+                    "dataset.n_reg": {"values": [3]},
                     "dataset.n_items": {"value": 50},
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
@@ -156,24 +156,6 @@ if __name__ == "__main__":
         )
         # set up wandb
         wandb.agent(config.wandb.sweep_id, count=1)
-
-        # #################################################################
-        # # code chunk to convert dot-separated keys to nested dictionaries
-        # # borrowed with gratitude from https://stackoverflow.com/a/63545662/2434875
-        # def deep_dict():
-        #     return defaultdict(deep_dict)
-
-        # cfg_dict = deep_dict()
-
-        # def deep_insert(key, value, d: dict):
-        #     keys = key.split(".")
-        #     for subkey in keys[:-1]:
-        #         d = d[subkey]
-        #     d[keys[-1]] = value
-
-        # for key, value in wandb_config.items():
-        #     deep_insert(key, value, cfg_dict)
-        # #################################################################
 
         # # we need to update some configs with the sweep values
         # hybrid_config = dataclasses.asdict(config)
