@@ -30,23 +30,23 @@ logger = logging.getLogger("workingmem")
 
 @dataclass
 class SIRConfig(GeneratedCachedDatasetConfig):
-    n_reg: int = 100
+    n_reg: int = 3
     """total number of registers in vocab to draw from"""
-    n_items: int = 100
+    n_items: int = 50
     """total number of items in vocab to draw from"""
-    seq_len: int = 100
+    seq_len: int = 10
     """ length of a trial sequence"""
     concurrent_reg: int = 2
     """number of registers to use concurrently within a trial. if this
     number is too high, we risk a simple heuristic solution such as: 
     simply check if an item has appeared in the prior history, when 
     number of total items n_items is high"""
-    concurrent_items: int = 5
+    concurrent_items: int = 3
     """number of items to use concurrently within a trial"""
-    heldout_reg: int = 20
+    heldout_reg: int = 0
     """number (absolute) of registers to hold out. these registers will never make an
     appearance in the train set"""
-    heldout_items: int = 20
+    heldout_items: int = 0
     """number (absolute) of items to hold out. these items will never appear in the train"""
     locality: typing.Union[int, None] = None
     """the locality value, when supplied, is used to sample concurrent registers locally
