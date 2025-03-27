@@ -176,7 +176,10 @@ datasets_faulty/
 
 wandb
 datasets
+datasets_*
+*.json
 output
 scratch
 *.log
 *.out
+*.csv
