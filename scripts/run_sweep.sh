@@ -7,7 +7,7 @@
 #SBATCH --mem-per-cpu 20G
 
 #SBATCH -a 1-30%50
-#SBATCH -t 1:30:00 ##shorter time (1hrs) because fewer training examples if 10_000, but make it 2hrs for 100_000
+#SBATCH -t 3:30:00 ##shorter time (1hrs) because fewer training examples if 10_000, but make it 2hrs for 100_000
 #SBATCH -o batch-output/training_run_%A_%a.out
 
 
@@ -76,3 +76,13 @@ echo "find sample run at batch-output/training_run_%A_1.out"
 # python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/shwv3iys # concurrent_reg 2
 # python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/8qejrp9n # concurrent_reg 3
 # python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/x0wla7ce # concurrent_reg 4
+
+
+# this is a repeat of sweeps 11a-c but with more granular logging as of commit:4f5dc7c
+# Sweep 11a: n_reg 3, concurrent_reg 3, seq_len 10, n_train 100_000 (to try to match the conditions of Aneri/Aaron's experiments)
+python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/tdyap6gh
+# Sweep 11b: n_reg 2, concurrent_reg 2, seq_len 10, n_train 100_000 (to try to match the conditions of Aneri/Aaron's experiments)
+# python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/iswucmve
+# Sweep 11c: n_reg 3, concurrent_reg 2, seq_len 10, n_train 100_000 (to try to match the conditions of Aneri/Aaron's experiments EXCEPT make n_reg=3)
+# python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/wcdpxsu2
+

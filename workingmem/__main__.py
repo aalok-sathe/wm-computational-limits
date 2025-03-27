@@ -131,14 +131,14 @@ if __name__ == "__main__":
                     "trainer.learning_rate": {"value": 1e-3},
                     "trainer.weight_decay": {"value": 3e-5},
                     # dataset parameters
-                    "dataset.n_train": {"value": 100_000},
+                    "dataset.n_train": {"value": 100_000},  # !
                     "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
-                    "dataset.seq_len": {"value": 20},
+                    "dataset.seq_len": {"value": 10},
                     "dataset.concurrent_items": {"value": 3},
                     "dataset.n_items": {"value": 50},
-                    "dataset.concurrent_reg": {"values": [2]},  # !
-                    "dataset.n_reg": {"values": [50]},  # !
+                    "dataset.concurrent_reg": {"values": [3]},  # !
+                    "dataset.n_reg": {"values": [3]},  # !
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
                     "dataset.ignore_prob": {"value": 0.5},
