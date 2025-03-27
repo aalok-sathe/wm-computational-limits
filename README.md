@@ -49,3 +49,8 @@ Examples look of this sort:
 ```
 St reg_54 item_4 diff St reg_54 item_81 diff St reg_60 item_81 diff St reg_60 item_81 diff St reg_54 item_81 same St reg_54 item_81 same St reg_60 item_40 diff Ig reg_54 item_81 same St reg_54 item_81 same Ig reg_54 item_81 diff St reg_60 item_81 diff St reg_54 item_81 diff St reg_60 item_40 diff St reg_60 item_4 diff Ig reg_54 item_81 same
 ```
+
+The main module (`-m workingmem`), implemented with an entrypoint in `workingmem/__main__.py` does the orchestrating of loading/constructing datasets, training/evaluating models.
+To see the options, run `python -m workingmem -h`.
+
+The module allows you to integrate the main script with [Weights & Biases (`wandb`)](https://wandb.ai)
