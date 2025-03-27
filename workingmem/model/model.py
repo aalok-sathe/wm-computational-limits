@@ -66,8 +66,13 @@ class TrainingConfig:
     batch_size: int = 128
 
     logging_strategy: str = "epoch"
-    logging_steps: int = 1  # log every epoch
-    save_strategy: str = "epoch"
+    logging_epochs: int = 1  # log every epoch
+
+    # log X many times per epoch: the # of steps to log after is determined
+    # by the dataset length and batch size
+    logging_steps_per_epoch: int = 5
+
+    save_strategy: str = "epoch"  # TODO: currently we aren't saving anything
     save_steps: int = None
 
     do_test: bool = True
@@ -139,6 +144,16 @@ class ModelWrapper(ABC):
 
         @dataclasses.dataclass
         class TrainingState:
+            """
+            this class is responsible for keeping track of the training state;
+            it has a `step` property that is a function of the epoch, the epoch step,
+            the dataset length, and batch size, and is computed on the fly and is
+            therefore a function decorated with `@property`.
+            when serializing this class, the `step` property will not be serialized
+            automatically, so you should explicitly log it if you want to keep track
+
+            """
+
             epoch: int = 0
             epoch_step: int = 0
             # best_val_loss: float = np.inf
@@ -191,9 +206,39 @@ class ModelWrapper(ABC):
                     }
                 )
 
-                # logger.debug(f"{wandb_logged = }")
+                # evaluate the mode when you reach the logging step within the epoch
+                log_every_steps = (
+                    len(dataset)
+                    // training_config.batch_size
+                    // training_config.logging_steps_per_epoch
+                )
+                if (
+                    training_config.logging_steps_per_epoch
+                    and state.epoch_step % log_every_steps == 0
+                ):
+                    eval_loss, eval_acc = self.evaluate(
+                        eval_dataset,
+                        # we will not be passing the predictions table
+                        # to the eval loop; predictions will be logged at
+                        # the end of each epoch
+                        train_epoch=None,
+                        predictions_table=None,
+                    )
+                    wandb.log(
+                        wandb_logged := {
+                            **dataclasses.asdict(state),
+                            "step": state.step,
+                            ######
+                            "eval_loss": eval_loss,
+                            "eval_acc": eval_acc,
+                        }
+                    )
 
-            if state.epoch % training_config.logging_steps == 0:
+            # eval once at the end of every epoch
+            if (
+                training_config.logging_epochs
+                and state.epoch % training_config.logging_epochs == 0
+            ):
                 eval_loss, eval_acc = self.evaluate(
                     eval_dataset,
                     train_epoch=state.epoch,
@@ -288,55 +333,6 @@ class ModelWrapper(ABC):
 
                 # log the first batch of eval examples and predictions to `wandb`
                 if train_epoch is not None and predictions_table is not None:
-                    # TODO: should this be an artifact instead?
-                    # columns = [
-                    #     "epoch",  # so that we can observe the evolution of the model's predictions over time
-                    #     "eval_step",  # this is the step within the training epoch
-                    #     "eval_example",
-                    #     "eval_prediction",
-                    #     "eval_labels",
-                    #     "logits",  # logits will be a seq_len x |V| heatmap for each example
-                    # ]
-
-                    # b, num_answers, |V|
-                    vocab_dict = dataset.tokenizer.get_vocab()
-                    id2token = {v: k for k, v in vocab_dict.items()}
-
-                    def logit_to_dict(logit: torch.Tensor):
-                        """
-                        opearates on a 1-D tensor of logits
-                        """
-                        if logit.shape != (max(vocab_dict.values()) + 1,):
-                            raise ValueError(
-                                f"logit must be a 1-D tensor of logits equal to {max(vocab_dict.values())+1 = }. received: {logit.shape = }"
-                            )
-                        d = {id2token[i]: float(logit[i]) for i in id2token}
-                        # sort d by values and keep the top 10
-                        return str(
-                            dict(
-                                sorted(
-                                    d.items(),
-                                    key=lambda x: x[1] if x[0] not in "samediff" else 1,
-                                    reverse=True,
-                                )[:12]
-                            )
-                        )
-
-                    # # b, num_answers, |V|
-                    # prob_matrix = (
-                    #     torch.nn.functional.softmax(answer_logits, dim=-1)
-                    #     .cpu()
-                    #     .detach()
-                    #     .numpy()
-                    # )
-                    # # b x num_answers dictionaries
-                    # prob_dicts = []
-                    # for b in range(prob_matrix.shape[0]):
-                    #     this_prob_dicts = []
-                    #     for ans_ix in range(prob_matrix.shape[1]):
-                    #         this_prob_dicts += [logit_to_dict(prob_matrix[b, ans_ix])]
-                    #     prob_dicts.append(this_prob_dicts)
-
                     for example_ix in range(len(inputs["tokens"])):
                         predictions_table.add_data(
                             train_epoch,
@@ -368,11 +364,6 @@ class ModelWrapper(ABC):
         this method is responsible for computing the loss and optionally the labels
         batch of a batch of inputs
         """
-
-        # NOTE: currently the batch dimension is presumed, but there's no mechanism in place
-        # to actually batch inputs; in the parent methods (train or evaluate), we are simply
-        # iterating over the dataset. the dataset doesn't automatically batch inputs.
-        # do we need to use a data collator here?
 
         inputs["answer_locations"] = inputs["answer_locations"].to(self.device)
         inputs["token_ids"] = inputs["token_ids"].to(self.device)
