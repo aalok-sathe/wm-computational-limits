@@ -242,7 +242,10 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
 
     @classmethod
     def from_path(
-        cls, path: typing.Union[str, Path], basedir="datasets", split="train"
+        cls,
+        path: typing.Union[str, Path],
+        split="train",
+        generate=False,
     ) -> "GeneratedCachedDataset":
         """
         creates a dataset instance from a path to a stored dataset
@@ -270,6 +273,9 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                 raise FileNotFoundError(f"{dest} does not exist")
         with (dest / "config.yaml").open("r") as f:
             config = cls.config_class(**yaml.load(f, Loader=yaml.SafeLoader))
+            # config.rootdir = dest.parent # TODO---rootdir should not have been included in the hash!
+            config.split = split
+            config.generate = generate
         instance = cls(config)
 
         return instance
