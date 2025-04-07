@@ -22,7 +22,12 @@ dev = [
     "anywidget>=0.9.16",
     "ipykernel>=6.29.5",
     "ipython>=8.33.0",
+    "jupyter>=1.1.1",
     "pdoc>=15.0.1",
     "plotly[express]>=6.0.1",
+    "scikit-learn>=1.6.1",
     "seaborn>=0.13.2",
 ]
+
+[tool.setuptools]
+packages = ['workingmem']
