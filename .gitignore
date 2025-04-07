@@ -176,10 +176,12 @@ datasets_faulty/
 
 wandb
 datasets
-datasets_*
+datasets*
+model_checkpoints
 *.json
 output
 scratch
 *.log
 *.out
 *.csv
+*.pth

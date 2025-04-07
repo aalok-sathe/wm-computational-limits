@@ -32,14 +32,13 @@ class ModelConfig:
 
     from_pretrained: typing.Union[Path, None] = None
     """`from_pretrained` is a path to a directory containing the model checkpoints and config.yaml.
-        |
+        typically:
         +-- config.yaml
         +-- history.yaml
-        +-- checkpoints/{epoch}.pth...
+        +-- checkpoints/{epoch}.pth, ...
         +-- best_model.pth 
-    if supplied, the remaining options are ignored. model is initialized using the config in the config.yaml file, and the state_dict is loaded from the best_model.pth file.  
+    if supplied, any ptions in the existing `ModelConfig` are ignored.  model is initialized using the config in the config.yaml file, and the state_dict is loaded from the *.pth file.  
     """
-
     attn_only: bool = True
     n_layers: int = 2
     n_heads: int = 2
@@ -73,7 +72,7 @@ class TrainingConfig:
     # if available, a wandb.run.sweep_id AND a model random seed will be appended
     # to the checkpoint directory name.
     # e.g. `model_checkpoints/{sweep_id}/{run_name}/`
-    checkpoint_dir: typing.Union[Path, None] = "model_checkpoints/"
+    checkpoint_dir: typing.Union[str, None] = "model_checkpoints/"
     batch_size: int = 128
 
     logging_strategy: str = "epoch"  # log every X epochs or X steps?
@@ -100,7 +99,7 @@ class TrainingHistoryEntry:
 
     # basic info
     dataset_name: str
-    dataset_path: str = None
+    dataset_path: str
 
     # training args
     epoch: int  # remember to update this (this is the epochs trained so far)
@@ -134,7 +133,11 @@ class ModelWrapper(ABC):
             self.model = HookedTransformer(
                 HookedTransformerConfig(
                     d_head=config.d_head,
-                    **dataclasses.asdict(config),
+                    **{
+                        k: v
+                        for k, v in dataclasses.asdict(config).items()
+                        if k != "from_pretrained"
+                    },
                 )
             )
         else:
@@ -151,7 +154,7 @@ class ModelWrapper(ABC):
         self.history = []
         self.model.to(self.device)
 
-    def load_checkpoint(self, checkpoint_dir: Path):
+    def load_checkpoint(self, checkpoint_dir: typing.Union[str, Path]):
         """
         `checkpoint_dir` points to a directory containing:
         - `config.yaml` which contains the `ModelConfig`
@@ -160,6 +163,10 @@ class ModelWrapper(ABC):
             to the existing history, so a model that has been trained first on dataset X and then Y
             will say so in its history)
         """
+        # 0. convert to Path
+        if isinstance(checkpoint_dir, str):
+            checkpoint_dir = Path(checkpoint_dir)
+
         # 1. load config
         with open(checkpoint_dir / "config.yaml", "r") as f:
             _config = yaml.load(f, Loader=yaml.FullLoader)
@@ -187,7 +194,11 @@ class ModelWrapper(ABC):
         self.model = HookedTransformer(
             HookedTransformerConfig(
                 d_head=_config.d_head,
-                **dataclasses.asdict(_config),
+                **{
+                    k: v
+                    for k, v in dataclasses.asdict(_config).items()
+                    if k != "from_pretrained"
+                },
             )
         )
 
@@ -202,12 +213,18 @@ class ModelWrapper(ABC):
         )
         logger.info(f"finished loading model state dict from {_state_dict_path}")
 
-    def save_checkpoint(self, checkpoint_dir: Path, epoch_num: int = None):
+    def save_checkpoint(
+        self, checkpoint_dir: typing.Union[str, Path], epoch_num: int = None
+    ):
         """
         saves model.state_dict(), config, and training history to checkpoint_dir.
         by default saves under 'best_model.pth' (overwriting if needed) unless an explicit
         epoch number is supplied, in which case, it is used as 'epoch_{epoch}.pth'.
         """
+        # 0. convert to Path
+        if isinstance(checkpoint_dir, str):
+            checkpoint_dir = Path(checkpoint_dir)
+
         # 0.1 if wandb.run.sweep_id is available, use it
         if self.history[-1].sweep_id is not None:
             checkpoint_dir /= self.history[-1].sweep_id
@@ -268,8 +285,8 @@ class ModelWrapper(ABC):
         # create an entry for history logging, which will be updated as we go
         self.history += [
             TrainingHistoryEntry(
-                dataset_name=dataset.dataset_name,
-                dataset_path=dataset.dataset_path,
+                dataset_name=repr(dataset),
+                dataset_path=str(dataset.config.basedir),
                 batch_size=training_config.batch_size,
                 learning_rate=training_config.learning_rate,
                 weight_decay=training_config.weight_decay,
@@ -374,7 +391,7 @@ class ModelWrapper(ABC):
                         predictions_table=None,
                     )
                     # update latest known eval_acc
-                    self.history[-1].eval_acc = eval_acc
+                    self.history[-1].eval_acc = float(eval_acc)
                     wandb.log(
                         wandb_logged := {
                             **dataclasses.asdict(state),
@@ -390,8 +407,8 @@ class ModelWrapper(ABC):
                     ################################
 
             if (
-                training_config.logging_epochs
-                and state.epoch % training_config.logging_epochs == 0
+                training_config.logging_steps
+                and state.epoch % training_config.logging_steps == 0
             ):
                 ################################
                 # eval once at the end of every epoch
@@ -403,7 +420,7 @@ class ModelWrapper(ABC):
                     predictions_table=predictions_table,
                 )
                 # update latest known eval_acc
-                self.history[-1].eval_acc = eval_acc
+                self.history[-1].eval_acc = float(eval_acc)
 
                 logger.info(f"EVAL: {state.epoch = } {eval_loss = }, {eval_acc = }")
 
@@ -425,7 +442,7 @@ class ModelWrapper(ABC):
                     state.best_val_loss = eval_loss
                     state.best_val_epoch = state.epoch
                     # update latest known eval_acc
-                    self.history[-1].eval_acc = eval_acc
+                    self.history[-1].eval_acc = float(eval_acc)
                     self.save_checkpoint(training_config.checkpoint_dir)
                 # end eval at the end of epoch
                 ################################

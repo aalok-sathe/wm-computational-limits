@@ -125,7 +125,7 @@ if __name__ == "__main__":
                     # model parameters
                     "model.n_layers": {"value": 2},
                     "model.n_heads": {"values": [2]},
-                    "model.d_model": {"values": [16]},
+                    "model.d_model": {"values": [32]},  # !
                     # "model.seed": {"values": [42, 43, 44, 45]},
                     # trainer parameters
                     "trainer.batch_size": {"value": 64},
@@ -137,11 +137,11 @@ if __name__ == "__main__":
                     "dataset.n_train": {"value": 100_000},  # !
                     "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
-                    "dataset.seq_len": {"value": 10},
+                    "dataset.seq_len": {"value": 14},
                     "dataset.concurrent_items": {"value": 3},
                     "dataset.n_items": {"value": 50},
-                    "dataset.concurrent_reg": {"values": [3]},  # !
-                    "dataset.n_reg": {"values": [3]},  # !
+                    "dataset.concurrent_reg": {"values": [2]},  # !
+                    "dataset.n_reg": {"values": [2]},  # !
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
                     "dataset.ignore_prob": {"value": 0.5},
