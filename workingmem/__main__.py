@@ -36,7 +36,7 @@ class WandbConfig:
     metric: dict = dataclasses.field(
         default_factory=lambda: {"goal": "maximize", "name": "eval_acc"}
     )
-    program: str = "run_wm.py"
+    program: str = "run_wm.py"  # the program to run with a wandb sweep agent
 
 
 @dataclasses.dataclass
@@ -97,6 +97,7 @@ def main(config: MainConfig):
     # loading a model from disk
     if config.model.d_vocab is None:
         config.model.d_vocab = eval_dataset.vocab_size
+
     model = ModelWrapper(config.model)
 
     if config.dataset.split == "train":
@@ -115,6 +116,7 @@ def main(config: MainConfig):
 if __name__ == "__main__":
     config = tyro.cli(MainConfig)
 
+    # case 1 is we create a new sweep
     if config.wandb.create_sweep:
         sweep_config = dataclasses.asdict(config.wandb)
         sweep_config.update(
@@ -123,13 +125,14 @@ if __name__ == "__main__":
                     # model parameters
                     "model.n_layers": {"value": 2},
                     "model.n_heads": {"values": [2]},
-                    "model.d_model": {"values": [128]},
+                    "model.d_model": {"values": [16]},
                     # "model.seed": {"values": [42, 43, 44, 45]},
                     # trainer parameters
-                    "trainer.batch_size": {"value": 128},
+                    "trainer.batch_size": {"value": 64},
                     "trainer.epochs": {"value": 60},
                     "trainer.learning_rate": {"value": 1e-3},
                     "trainer.weight_decay": {"value": 3e-5},
+                    "trainer.checkpoint_dir": {"value": "model_checkpoints/"},
                     # dataset parameters
                     "dataset.n_train": {"value": 100_000},  # !
                     "dataset.n_val": {"value": 1_000},
@@ -154,20 +157,10 @@ if __name__ == "__main__":
         logger.info(
             f"running an agent part of sweep {config.wandb.sweep_id} with: {wandb.config}"
         )
-        # set up wandb
+        # this uses the wandb sweep_id to initialize a single wandb agent and runs
+        # the designated script as specified in the `WandbConfig` argument that was
+        # used when creating the sweep (see the first clause of this if-statement)
         wandb.agent(config.wandb.sweep_id, count=1)
-
-        # # we need to update some configs with the sweep values
-        # hybrid_config = dataclasses.asdict(config)
-        # hybrid_config.update(cfg_dict)
-
-        # main(from_dict(MainConfig, hybrid_config))
-
-        # import submitit
-        # executor = submitit.AutoExecutor(folder="logs/slurm_logs")
-        # executor.update_parameters(timeout_min=120, slurm_partition="cs-3090-gcondo")
-        # config_array = []
-        # jobs = executor.map_array(main, config_array)  # just a list of jobs
 
     else:  # run as normal in a single-run fashion using wandb only for logging
         wandb.init(project=config.wandb.project_name, config=config)

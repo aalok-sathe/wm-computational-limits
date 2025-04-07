@@ -7,13 +7,11 @@ import logging
 import yaml
 
 # installed packages
-import einops
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformer_lens import HookedTransformer, HookedTransformerConfig
-from matplotlib import pyplot as plt
 
 import wandb
 
@@ -74,7 +72,7 @@ class TrainingConfig:
     # this is where checkpoints are saved, if supplied.
     # if available, a wandb.run.sweep_id AND a model random seed will be appended
     # to the checkpoint directory name.
-    # e.g. `model_checkpoints/{sweep_id}/{seed}/`
+    # e.g. `model_checkpoints/{sweep_id}/{run_name}/`
     checkpoint_dir: typing.Union[Path, None] = "model_checkpoints/"
     batch_size: int = 128
 
@@ -213,8 +211,17 @@ class ModelWrapper(ABC):
         # 0.1 if wandb.run.sweep_id is available, use it
         if self.history[-1].sweep_id is not None:
             checkpoint_dir /= self.history[-1].sweep_id
+
         # 0.2 if a run name is available, use it
-        checkpoint_dir /= self.history[-1].run_name
+        if self.history[-1].run_name is not None:
+            checkpoint_dir /= self.history[-1].run_name
+        else:
+            # else, use a random prefix to avoid collisions
+            import uuid
+
+            # generate a random UUID
+            random_string = str(uuid.uuid4())
+            checkpoint_dir /= random_string[:6]
 
         # 1. save model
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
