@@ -4,6 +4,7 @@ import typing
 from abc import ABC
 from pathlib import Path
 import logging
+import yaml
 
 # installed packages
 import einops
@@ -31,22 +32,30 @@ class ModelConfig:
 
     """
 
+    from_pretrained: typing.Union[Path, None] = None
+    """`from_pretrained` is a path to a directory containing the model checkpoints and config.yaml.
+        |
+        +-- config.yaml
+        +-- history.yaml
+        +-- checkpoints/{epoch}.pth...
+        +-- best_model.pth 
+    if supplied, the remaining options are ignored. model is initialized using the config in the config.yaml file, and the state_dict is loaded from the best_model.pth file.  
+    """
+
     attn_only: bool = True
     n_layers: int = 2
     n_heads: int = 2
-    n_ctx: int = 500  # this should be set so that it is definitely longer than the trial sequence length
-    d_model: int = 128
+    n_ctx: int = 500  # this should be set so that it is definitely longer than the longest trial sequence length
+    d_model: int = 128  # dimensionality of the residual stream and embeddings
     d_mlp: int = 0
     act_fn: str = "relu"  # from HookedTransformerConfig: "Must be set unless using an attn-only model."
     d_vocab: int = None  # vocab is determined by the tokenizer
     init_weights: bool = True
     seed: typing.Union[int, None] = None
-    # checkpoint_dir: typing.Union[Path, None] = None
-    # from_checkpoint: typing.Union[Path, None] = None
 
     @property
     def d_head(self) -> int:
-        """returns the dimensionality of the attention heads in the model as per `d_model` and `n_heads`"""
+        """calculate the dimensionality of the attention heads in the model as per `d_model` and `n_heads`"""
         d_head = self.d_model // self.n_heads
         if d_head * self.n_heads == self.d_model:
             return d_head
@@ -62,20 +71,49 @@ class TrainingConfig:
     optimizer: str = "adamw"  # do not change this!
     learning_rate: float = 5e-5
     weight_decay: float = 0.0003
-    output_dir: str = "output"
+    # this is where checkpoints are saved, if supplied.
+    # if available, a wandb.run.sweep_id AND a model random seed will be appended
+    # to the checkpoint directory name.
+    # e.g. `model_checkpoints/{sweep_id}/{seed}/`
+    checkpoint_dir: typing.Union[Path, None] = "model_checkpoints/"
     batch_size: int = 128
 
-    logging_strategy: str = "epoch"
-    logging_epochs: int = 1  # log every epoch
+    logging_strategy: str = "epoch"  # log every X epochs or X steps?
+    logging_steps: int = 1  # log every X epochs/steps
 
     # log X many times per epoch: the # of steps to log after is determined
     # by the dataset length and batch size
-    logging_steps_per_epoch: int = 5
-
-    save_strategy: str = "epoch"  # TODO: currently we aren't saving anything
+    logging_steps_per_epoch: int = 10
+    # 'best' saves a checkpoint each time we see a drop in validation loss, named 'best_model.pth'
+    # 'epoch' saves a checkpoint at the end of each epoch named 'epoch_{epoch}.pth' in a subdirectory called 'checkpoints/'
+    save_strategy: typing.Literal["best", "epoch"] = "best"
+    # if strategy is 'epoch', then we save every X epochs determined by `save_steps`
     save_steps: int = None
 
     do_test: bool = True
+
+
+@dataclasses.dataclass
+class TrainingHistoryEntry:
+    """
+    represents one entry in model training history. provides appropriate fields that
+    should be populated when recording history
+    """
+
+    # basic info
+    dataset_name: str
+    dataset_path: str = None
+
+    # training args
+    epoch: int  # remember to update this (this is the epochs trained so far)
+    batch_size: int
+    learning_rate: float
+    weight_decay: float
+    sweep_id: str
+    run_name: str
+
+    # outcomes
+    eval_acc: float
 
 
 class ModelWrapper(ABC):
@@ -86,40 +124,126 @@ class ModelWrapper(ABC):
 
     model: typing.Union[HookedTransformer, torch.nn.Transformer]
     # we want to document the unique identification of the dataset a model has been trained on,
-    history: typing.List[typing.Dict]
+    history: typing.List[typing.Union[TrainingHistoryEntry, typing.Dict]]
 
     def __init__(self, config: ModelConfig):
         self.config = config
-
-        logger.info(f"initializing model with config: {config}")
-        self.model = HookedTransformer(
-            HookedTransformerConfig(
-                # config.n_layers,
-                # config.d_model,
-                # config.n_ctx,
-                d_head=config.d_head,
-                **dataclasses.asdict(config),
-            )
-        )
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        if config.from_pretrained is None:
+            # if no pretrained path is supplied, we initialize the model from scratch
+            logger.info(f"initializing model from scratch with config: {config}")
+            self.model = HookedTransformer(
+                HookedTransformerConfig(
+                    d_head=config.d_head,
+                    **dataclasses.asdict(config),
+                )
+            )
+        else:
+            # if we're asked to load from a pretrained checkpoint, we load the model
+            # using the stored config rather than the supplied config
+            # note that any passed options about model parameters will be ignored!
+            # we should make sure the user is aware of this.
+            logger.warning(f"loading model from checkpoint: {config.from_pretrained}")
+            logger.warning(
+                f"any additional options passed via `ModelConfig` will be ingored!\n\t{config}"
+            )
+            self.load_checkpoint(config.from_pretrained)
+
+        self.history = []
         self.model.to(self.device)
 
     def load_checkpoint(self, checkpoint_dir: Path):
         """
         `checkpoint_dir` points to a directory containing:
         - `config.yaml` which contains the `ModelConfig`
-        - `model.pth` which contains the model state_dict
+        - `*.pth`: a single .pth file that contains the model state_dict
         - `history.yaml` which details the training history (this is inherited and appended
             to the existing history, so a model that has been trained first on dataset X and then Y
             will say so in its history)
         """
+        # 1. load config
+        with open(checkpoint_dir / "config.yaml", "r") as f:
+            _config = yaml.load(f, Loader=yaml.FullLoader)
+        logger.info(f"loaded config for pretrained model:\n\t{_config}")
 
-    def save_checkpoint(self, checkpoint_dir: Path): ...
+        # 2. load history
+        with open(checkpoint_dir / "history.yaml", "r") as f:
+            self.history = yaml.load(f, Loader=yaml.FullLoader)
+
+        # 3. load model
+        # 3.1 load the state dict
+
+        # NOTE: may be worth supporting state dicts other than `best_model.pth`,
+        # e.g. `epoch_{epoch}.pth` for taking a model trained for X epochs
+        _state_dict_path = checkpoint_dir.glob("checkpoints/*.pth")
+        if len(_state_dict_path) != 1:
+            raise ValueError(
+                f"expected exactly one .pth file in {checkpoint_dir}, found {_state_dict_path}"
+            )
+        [_state_dict_path] = _state_dict_path
+        # vocab_path = os.path.join(root_dir, d, "vocab.json")
+
+        # 3.2 initialize a model instance just based on the config (this will have
+        # random weights, but we are about to overwrite them)
+        self.model = HookedTransformer(
+            HookedTransformerConfig(
+                d_head=_config.d_head,
+                **dataclasses.asdict(_config),
+            )
+        )
+
+        # 3.3 load the state dict into the model: this should overwrite the weights
+        _state_dict = torch.load(_state_dict_path, map_location=self.device)
+        self.model.load_and_process_state_dict(
+            _state_dict,
+            center_unembed=True,  # this shifts the unembedding matrix weights to be centered around 0
+            center_writing_weights=True,  # this shifts the weights written to residual stream to be centered around 0
+            fold_ln=False,
+            refactor_factored_attn_matrices=True,
+        )
+        logger.info(f"finished loading model state dict from {_state_dict_path}")
+
+    def save_checkpoint(self, checkpoint_dir: Path, epoch_num: int = None):
+        """
+        saves model.state_dict(), config, and training history to checkpoint_dir.
+        by default saves under 'best_model.pth' (overwriting if needed) unless an explicit
+        epoch number is supplied, in which case, it is used as 'epoch_{epoch}.pth'.
+        """
+        # 0.1 if wandb.run.sweep_id is available, use it
+        if self.history[-1].sweep_id is not None:
+            checkpoint_dir /= self.history[-1].sweep_id
+        # 0.2 if a run name is available, use it
+        checkpoint_dir /= self.history[-1].run_name
+
+        # 1. save model
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        (checkpoint_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+
+        checkpoint_path = (
+            checkpoint_dir / "best_model.pth"
+            if epoch_num is None
+            else checkpoint_dir / "checkpoints" / f"epoch_{epoch_num}.pth"
+        )
+        torch.save(self.model.state_dict(), checkpoint_path)
+
+        # 2. save config
+        config_path = checkpoint_dir / "config.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(dataclasses.asdict(self.config), f)
+
+        # 3. save training history
+        history_path = checkpoint_dir / "history.yaml"
+        with open(history_path, "w") as f:
+            yaml.dump([*map(dataclasses.asdict, self.history)], f)
+
+        logger.info(f"saved model checkpoint to {checkpoint_path}")
 
     def set_embeddings(self, embeddings: typing.Union[np.ndarray, torch.Tensor]):
         """
-        explicitly set the embeddings of the model to a supplied matrix. the dimensionality of the matrix should be
-        `vocab_size x d_model` as initialized (check `self.config`)
+        explicitly set the embeddings of the model to a supplied weight matrix W_E.
+        the dimensionality of the matrix should be `vocab_size x d_model` as initialized (check
+        `self.config`)
         """
         raise NotImplementedError
 
@@ -133,6 +257,21 @@ class ModelWrapper(ABC):
         """
         given an `eval_dataset`, periodically evaluates model on eval_dataset and logs the results
         """
+
+        # create an entry for history logging, which will be updated as we go
+        self.history += [
+            TrainingHistoryEntry(
+                dataset_name=dataset.dataset_name,
+                dataset_path=dataset.dataset_path,
+                batch_size=training_config.batch_size,
+                learning_rate=training_config.learning_rate,
+                weight_decay=training_config.weight_decay,
+                sweep_id=wandb.run.sweep_id,
+                run_name=wandb.run.name,
+                epoch=0,  # to be filled in later
+                eval_acc=None,  # to be filled in later
+            )
+        ]
 
         train_dataloader = DataLoader(
             dataset,
@@ -151,13 +290,12 @@ class ModelWrapper(ABC):
             therefore a function decorated with `@property`.
             when serializing this class, the `step` property will not be serialized
             automatically, so you should explicitly log it if you want to keep track
-
             """
 
             epoch: int = 0
             epoch_step: int = 0
-            # best_val_loss: float = np.inf
-            # best_val_epoch: int = 0
+            best_val_loss: float = np.inf
+            best_val_epoch: int = -1
 
             @property
             def step(self):
@@ -172,7 +310,6 @@ class ModelWrapper(ABC):
                 "eval_example",
                 "eval_prediction",
                 "eval_labels",
-                # "logits",
             ]
         )
 
@@ -186,10 +323,14 @@ class ModelWrapper(ABC):
 
         state = TrainingState()
         for state.epoch in tqdm(range(total := training_config.epochs), total=total):
+            ################################
+            #### begin epoch            ####
+            ################################
             # set the model to training mode at the beginning of each epoch, since there is
             # no guarantee that it will still be in training mode from the previous epoch
             # if we went into the eval subroutine
             self.model.train()
+            self.history[-1].epoch = state.epoch
 
             for state.epoch_step, inputs in enumerate(train_dataloader):
                 loss = self._step(inputs)
@@ -201,12 +342,11 @@ class ModelWrapper(ABC):
                     wandb_logged := {
                         **dataclasses.asdict(state),
                         "step": state.step,
-                        ######
                         "train_loss": loss.item(),
                     }
                 )
 
-                # evaluate the mode when you reach the logging step within the epoch
+                # evaluate the model when you reach the logging step within the epoch
                 log_every_steps = (
                     len(dataset)
                     // training_config.batch_size
@@ -216,6 +356,8 @@ class ModelWrapper(ABC):
                     training_config.logging_steps_per_epoch
                     and state.epoch_step % log_every_steps == 0
                 ):
+                    ################################
+                    # eval loop mid-epoch at however-many logging steps
                     eval_loss, eval_acc = self.evaluate(
                         eval_dataset,
                         # we will not be passing the predictions table
@@ -224,21 +366,28 @@ class ModelWrapper(ABC):
                         train_epoch=None,
                         predictions_table=None,
                     )
+                    # update latest known eval_acc
+                    self.history[-1].eval_acc = eval_acc
                     wandb.log(
                         wandb_logged := {
                             **dataclasses.asdict(state),
                             "step": state.step,
-                            ######
                             "eval_loss": eval_loss,
                             "eval_acc": eval_acc,
                         }
                     )
+                    logger.info(
+                        f"------------- {state.epoch_step = } {eval_loss = }, {eval_acc = }"
+                    )
+                    # end eval loop mid-epoch at however-many logging steps
+                    ################################
 
-            # eval once at the end of every epoch
             if (
                 training_config.logging_epochs
                 and state.epoch % training_config.logging_epochs == 0
             ):
+                ################################
+                # eval once at the end of every epoch
                 eval_loss, eval_acc = self.evaluate(
                     eval_dataset,
                     train_epoch=state.epoch,
@@ -246,19 +395,48 @@ class ModelWrapper(ABC):
                     # logging predictions and heatmaps over logits
                     predictions_table=predictions_table,
                 )
+                # update latest known eval_acc
+                self.history[-1].eval_acc = eval_acc
 
-                logger.info(f"EVAL: {eval_loss = }, {eval_acc = }")
+                logger.info(f"EVAL: {state.epoch = } {eval_loss = }, {eval_acc = }")
 
                 wandb.log(
                     wandb_logged := {
                         **dataclasses.asdict(state),
                         "step": state.step,
-                        ######
                         "eval_loss": eval_loss,
                         "eval_acc": eval_acc,
                     }
                 )
                 logger.debug(f"{wandb_logged = }")
+
+                # check if we had an improvement in validation loss
+                if eval_loss < state.best_val_loss:
+                    logger.info(
+                        f"found new best validation loss: {eval_loss} < {state.best_val_loss}"
+                    )
+                    state.best_val_loss = eval_loss
+                    state.best_val_epoch = state.epoch
+                    # update latest known eval_acc
+                    self.history[-1].eval_acc = eval_acc
+                    self.save_checkpoint(training_config.checkpoint_dir)
+                # end eval at the end of epoch
+                ################################
+
+            # if saving strategy is epoch, then make a call to save anyway
+            if training_config.save_strategy == "epoch":
+                if (
+                    training_config.save_steps
+                    and state.epoch % training_config.save_steps == 0
+                ):
+                    self.save_checkpoint(
+                        training_config.checkpoint_dir,
+                        epoch_num=state.epoch,
+                    )
+
+            ################################
+            #### end epoch              ####
+            ################################
 
         if predictions_table is not None:
             wandb.log({"predictions": predictions_table})
