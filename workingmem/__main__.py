@@ -140,8 +140,8 @@ if __name__ == "__main__":
                     "dataset.seq_len": {"value": 14},
                     "dataset.concurrent_items": {"value": 3},
                     "dataset.n_items": {"value": 50},
-                    "dataset.concurrent_reg": {"values": [2]},  # !
-                    "dataset.n_reg": {"values": [2]},  # !
+                    "dataset.concurrent_reg": {"values": [3]},  # !
+                    "dataset.n_reg": {"values": [3]},  # !
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
                     "dataset.ignore_prob": {"value": 0.5},

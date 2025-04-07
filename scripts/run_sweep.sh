@@ -4,10 +4,11 @@
 
 # Request a GPU partition node and access to 1 GPU
 #SBATCH -p 3090-gcondo --gres=gpu:1
+####### SBATCH -p l40s-gcondo --gres=gpu:1
 #SBATCH --mem-per-cpu 20G
 
-#SBATCH -a 1-30%50
-#SBATCH -t 3:30:00 ##shorter time (1hrs) because fewer training examples if 10_000, but make it 2hrs for 100_000
+#SBATCH -a 1-29%50
+#SBATCH -t 1:37:00 ##shorter time (1hrs) because fewer training examples if 10_000, but make it 2hrs for 100_000
 #SBATCH -o batch-output/training_run_%A_%a.out
 
 
@@ -86,3 +87,14 @@ echo "find sample run at batch-output/training_run_%A_1.out"
 # Sweep 11c: n_reg 3, concurrent_reg 2, seq_len 10, n_train 100_000 (to try to match the conditions of Aneri/Aaron's experiments EXCEPT make n_reg=3)
 # python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/wcdpxsu2
 
+##########################################
+# changes to checkpointing and to some   #
+# crucial dataset and model params       #
+# (seq_len=14); (d_model=32)             #
+#### commits e05464-89c05b               #
+##########################################
+
+# Sweep 12a: n_reg 2, concurrent 2
+# python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/vc7i09gs
+# Sweep 12a: n_reg 3, concurrent 3
+python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/h3kgrek1

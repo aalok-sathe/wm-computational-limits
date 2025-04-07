@@ -108,6 +108,8 @@ class TrainingHistoryEntry:
     weight_decay: float
     sweep_id: str
     run_name: str
+    run_url: str
+    checkpoint_dir: str  # this is the directory where the model checkpoint is saved
 
     # outcomes
     eval_acc: float
@@ -240,6 +242,8 @@ class ModelWrapper(ABC):
             random_string = str(uuid.uuid4())
             checkpoint_dir /= random_string[:6]
 
+        self.history[-1].checkpoint_dir = str(checkpoint_dir)
+
         # 1. save model
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         (checkpoint_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
@@ -292,6 +296,8 @@ class ModelWrapper(ABC):
                 weight_decay=training_config.weight_decay,
                 sweep_id=wandb.run.sweep_id,
                 run_name=wandb.run.name,
+                run_url=wandb.run.get_url(),
+                checkpoint_dir=None,  # to be filled in later
                 epoch=0,  # to be filled in later
                 eval_acc=None,  # to be filled in later
             )
