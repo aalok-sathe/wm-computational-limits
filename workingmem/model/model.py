@@ -64,6 +64,7 @@ class ModelConfig:
 
 @dataclasses.dataclass
 class TrainingConfig:
+    freeze_embeddings: bool = False
     epochs: int = 50
     optimizer: str = "adamw"  # do not change this!
     learning_rate: float = 5e-5
@@ -110,6 +111,7 @@ class TrainingHistoryEntry:
     run_name: str
     run_url: str
     checkpoint_dir: str  # this is the directory where the model checkpoint is saved
+    freeze_embeddings: bool
 
     # outcomes
     eval_acc: float
@@ -171,7 +173,7 @@ class ModelWrapper(ABC):
 
         # 1. load config
         with open(checkpoint_dir / "config.yaml", "r") as f:
-            _config = yaml.load(f, Loader=yaml.FullLoader)
+            _config = ModelConfig(**yaml.load(f, Loader=yaml.FullLoader))
         logger.info(f"loaded config for pretrained model:\n\t{_config}")
 
         # 2. load history
@@ -183,7 +185,7 @@ class ModelWrapper(ABC):
 
         # NOTE: may be worth supporting state dicts other than `best_model.pth`,
         # e.g. `epoch_{epoch}.pth` for taking a model trained for X epochs
-        _state_dict_path = checkpoint_dir.glob("checkpoints/*.pth")
+        _state_dict_path = list(checkpoint_dir.glob("*.pth"))
         if len(_state_dict_path) != 1:
             raise ValueError(
                 f"expected exactly one .pth file in {checkpoint_dir}, found {_state_dict_path}"
@@ -294,6 +296,7 @@ class ModelWrapper(ABC):
                 batch_size=training_config.batch_size,
                 learning_rate=training_config.learning_rate,
                 weight_decay=training_config.weight_decay,
+                freeze_embeddings=training_config.freeze_embeddings,
                 sweep_id=wandb.run.sweep_id,
                 run_name=wandb.run.name,
                 run_url=wandb.run.get_url(),
@@ -359,7 +362,17 @@ class ModelWrapper(ABC):
             # set the model to training mode at the beginning of each epoch, since there is
             # no guarantee that it will still be in training mode from the previous epoch
             # if we went into the eval subroutine
+            # NOTE this might not matter, since we don't use standard language modeling
+            # design decisions like dropout
             self.model.train()
+
+            # freeze model embeddings (and unembeddings) if requested
+            if training_config.freeze_embeddings:
+                for param in self.model.embed.parameters():
+                    param.requires_grad = False
+                for param in self.model.unembed.parameters():
+                    param.requires_grad = False
+
             self.history[-1].epoch = state.epoch
 
             for state.epoch_step, inputs in enumerate(train_dataloader):
@@ -484,10 +497,13 @@ class ModelWrapper(ABC):
             test_loss, test_acc = self.test(test_dataset, test_table)
             logger.info(f"TEST: {test_loss = }, {test_acc = }")
             wandb.log(
-                {"epoch": state.epoch, "test_loss": test_loss, "test_acc": test_acc}
+                {
+                    "epoch": state.epoch,
+                    "test_loss": test_loss,
+                    "test_acc": test_acc,
+                    "test_predictions": test_table,
+                }
             )
-            if test_table is not None:
-                wandb.log({"test_predictions": test_table})
 
     def test(
         self, dataset: GeneratedCachedDataset, test_predictions_table: wandb.Table
