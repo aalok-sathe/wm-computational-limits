@@ -30,7 +30,7 @@ class ModelConfig:
 
     """
 
-    from_pretrained: typing.Union[Path, None] = None
+    from_pretrained: typing.Union[str, None] = None
     """`from_pretrained` is a path to a directory containing the model checkpoints and config.yaml.
         typically:
         +-- config.yaml
@@ -64,7 +64,7 @@ class ModelConfig:
 
 @dataclasses.dataclass
 class TrainingConfig:
-    freeze_embeddings: bool = False
+    freeze_embeddings: bool = None
     epochs: int = 50
     optimizer: str = "adamw"  # do not change this!
     learning_rate: float = 5e-5
@@ -81,7 +81,7 @@ class TrainingConfig:
 
     # log X many times per epoch: the # of steps to log after is determined
     # by the dataset length and batch size
-    logging_steps_per_epoch: int = 10
+    logging_steps_per_epoch: int = 5
     # 'best' saves a checkpoint each time we see a drop in validation loss, named 'best_model.pth'
     # 'epoch' saves a checkpoint at the end of each epoch named 'epoch_{epoch}.pth' in a subdirectory called 'checkpoints/'
     save_strategy: typing.Literal["best", "epoch"] = "best"
@@ -125,7 +125,7 @@ class ModelWrapper(ABC):
 
     model: typing.Union[HookedTransformer, torch.nn.Transformer]
     # we want to document the unique identification of the dataset a model has been trained on,
-    history: typing.List[typing.Union[TrainingHistoryEntry, typing.Dict]]
+    history: typing.List[typing.Union[TrainingHistoryEntry, typing.Dict]] = None
 
     def __init__(self, config: ModelConfig):
         self.config = config
@@ -155,7 +155,8 @@ class ModelWrapper(ABC):
             )
             self.load_checkpoint(config.from_pretrained)
 
-        self.history = []
+        if self.history is None:
+            self.history = []
         self.model.to(self.device)
 
     def load_checkpoint(self, checkpoint_dir: typing.Union[str, Path]):
@@ -262,10 +263,18 @@ class ModelWrapper(ABC):
         with open(config_path, "w") as f:
             yaml.dump(dataclasses.asdict(self.config), f)
 
+        def convert_dataclass_if_needed(obj):
+            """
+            convert dataclass to dict if needed
+            """
+            if dataclasses.is_dataclass(obj):
+                return dataclasses.asdict(obj)
+            return obj
+
         # 3. save training history
         history_path = checkpoint_dir / "history.yaml"
         with open(history_path, "w") as f:
-            yaml.dump([*map(dataclasses.asdict, self.history)], f)
+            yaml.dump([*map(convert_dataclass_if_needed, self.history)], f)
 
         logger.info(f"saved model checkpoint to {checkpoint_path}")
 

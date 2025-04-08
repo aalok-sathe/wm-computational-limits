@@ -5,7 +5,10 @@ run as: python -m workingmem
 #!/usr/bin/env python3
 import typing
 import dataclasses
+import yaml
 import logging
+import random
+from pathlib import Path
 from collections import defaultdict
 
 # 3rd party packages
@@ -51,6 +54,9 @@ class MainConfig:
     trainer: TrainingConfig
     wandb: WandbConfig
     seed = None
+    # for array jobs, the task id is useful to, e.g., resume from the Xth pretrained model
+    array_task_id: typing.Union[int, None] = None
+    filter_by_accuracy: bool = True
 
     def __post_init__(self):
         logger.info(f"running post-init hook to set seeds to {self.seed}")
@@ -98,6 +104,42 @@ def main(config: MainConfig):
     if config.model.d_vocab is None:
         config.model.d_vocab = eval_dataset.vocab_size
 
+    # if we're loading a pretrained model, check if an explicit model is passed, or a directory containing many models is
+    # provided, in which case, we'd use the `config.array_task_id` to load the Xth model (modulo total models in dir)
+    if (
+        config.model.from_pretrained
+        and len(list(Path(config.model.from_pretrained).glob("*.pth"))) == 0
+    ):
+        # enumerate subdirectories within this dirctory
+        # and load the Xth model modulo the number of models in the directory
+        models_dir = Path(config.model.from_pretrained)
+        models_dir = list(models_dir.glob("*"))
+        assert all(len(list(m.glob("*.pth"))) == 1 for m in models_dir), (
+            f"malformed model checkpoints dir passed: {models_dir}"
+        )
+
+        if config.filter_by_accuracy:
+            # filter models by the accuracy recorded in their history
+            def filter_by_accuracy(m: Path, threshold=0.99) -> bool:
+                with open(m / "history.yaml", "r") as f:
+                    history = yaml.load(f, Loader=yaml.FullLoader)
+                return history[-1]["eval_acc"] >= threshold
+
+            prev_len = len(models_dir)
+            models_dir = list(filter(filter_by_accuracy, models_dir))
+            logger.info(
+                f"filtering models by accuracy >= .99 in {models_dir}. {prev_len = }, {len(models_dir) = }"
+            )
+
+        # set `from_pretrained` path to the Xth model NOTE randomly for now:(
+        config.model.from_pretrained = str(random.choice(models_dir))
+        # record the new pretrained model path corresponding to the model we're actually using
+        wandb.config.update(
+            {"model.from_pretrained": str(config.model.from_pretrained)}
+        )
+
+    # once the `from_pretrained` path is set, we can just use the regular way to load the model,
+    # since the `ModelWrapper` class will take care of loading the model from checkpoint
     model = ModelWrapper(config.model)
 
     if config.dataset.split == "train":
@@ -122,14 +164,20 @@ if __name__ == "__main__":
         sweep_config.update(
             {
                 "parameters": {
+                    # "filter_by_accuracy": {"value": "True"},
                     # model parameters
+                    "model.from_pretrained": {
+                        "value": "model_checkpoints/evcxg3kc/"  # n_reg 50 exposure task
+                        # "value": "model_checkpoints/vc7i09gs/"  # n_reg 2 concurrent 2
+                    },  # !
                     "model.n_layers": {"value": 2},
                     "model.n_heads": {"values": [2]},
                     "model.d_model": {"values": [32]},  # !
                     # "model.seed": {"values": [42, 43, 44, 45]},
                     # trainer parameters
+                    "trainer.freeze_embeddings": {"value": "False"},  # !
                     "trainer.batch_size": {"value": 64},
-                    "trainer.epochs": {"value": 60},
+                    "trainer.epochs": {"value": 40},
                     "trainer.learning_rate": {"value": 1e-3},
                     "trainer.weight_decay": {"value": 3e-5},
                     "trainer.checkpoint_dir": {"value": "model_checkpoints/"},
@@ -140,8 +188,8 @@ if __name__ == "__main__":
                     "dataset.seq_len": {"value": 14},
                     "dataset.concurrent_items": {"value": 3},
                     "dataset.n_items": {"value": 50},
-                    "dataset.concurrent_reg": {"values": [3]},  # !
-                    "dataset.n_reg": {"values": [3]},  # !
+                    "dataset.concurrent_reg": {"values": [2]},  # !
+                    "dataset.n_reg": {"values": [2]},  # !
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
                     "dataset.ignore_prob": {"value": 0.5},
