@@ -63,7 +63,7 @@ class SIRConfig(GeneratedCachedDatasetConfig):
         store/ignore instruction"""
 
     # seed: int = None
-    n_train: int = 10_000
+    n_train: int = 100_000
     n_val: int = 1_000
     n_test: int = 1_000
 

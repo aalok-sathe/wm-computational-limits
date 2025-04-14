@@ -81,7 +81,7 @@ def main(config: MainConfig):
     as per config. wandb is used for logging regardless of sweep or not.
     """
     logger.info(f"running main with config: {config}")
-    wandb.init(project=config.wandb.project_name, config=config, dir='~/scratch/wandb')
+    wandb.init(project=config.wandb.project_name, config=config, dir="~/scratch/wandb")
 
     # set up the dataset
     logger.info("loading datasets")
