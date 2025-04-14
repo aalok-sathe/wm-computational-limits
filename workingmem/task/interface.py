@@ -132,9 +132,16 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         validates that we have enough examples of each split to write to disk.
         """
 
+        attr_str, H = self._attr_str_hash()
         with (
             open(self.config.basedir / "config.yaml", "w") as f,
-            open(self.config.basedir / (repr(self) + ".txt"), "w") as k,
+            open(
+                self.config.basedir
+                / (
+                    H + f"({self.config.n_reg=},{self.config.concurrent_reg=})" + ".txt"
+                ),
+                "w",
+            ) as k,
         ):
             yaml.dump(self._metadata(), f, Dumper=yaml.SafeDumper)
             yaml.dump(self._metadata(), k, Dumper=yaml.SafeDumper)
@@ -168,20 +175,29 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         )
         return getattr(self.config, f"n_{self.config.split}")
 
+    def _attr_str_hash(self) -> typing.Tuple[str, str]:
+        attr_str = ",".join(
+            [
+                f"{k}={v}"
+                for k, v in sorted(self._metadata().items())
+                if k not in ("basedir", "rootdir", "split", "generate")
+            ]
+        )
+        H = sha1(attr_str.encode()).hexdigest()[: self._hash_length].upper()
+        return attr_str, H
+
     def __str__(self) -> str:
         """
         creates a stringified identity of the dataset for storing on disk
         """
-        attr_str = ",".join([f"{k}={v}" for k, v in sorted(self._metadata().items())])
-        H = sha1(attr_str.encode()).hexdigest()[: self._hash_length].upper()
+        _, H = self._attr_str_hash()
         return f"{self.__class__.__name__}_{H}"
 
     def __repr__(self):
         """
         creates a stringified identity of the dataset for printing during execution
         """
-        attr_str = ",".join([f"{k}={v}" for k, v in sorted(self._metadata().items())])
-        H = sha1(attr_str.encode()).hexdigest()[: self._hash_length].upper()
+        attr_str, H = self._attr_str_hash()
         return f"{self.__class__.__name__}_{H}_({attr_str})"
 
     def _metadata(self) -> typing.Mapping:
