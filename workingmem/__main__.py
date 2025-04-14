@@ -34,7 +34,7 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-0"
+    project_name: str = "wm-comp-limit-1"
     method: str = "random"
     metric: dict = dataclasses.field(
         default_factory=lambda: {"goal": "maximize", "name": "eval_acc"}
@@ -81,7 +81,7 @@ def main(config: MainConfig):
     as per config. wandb is used for logging regardless of sweep or not.
     """
     logger.info(f"running main with config: {config}")
-    wandb.init(project=config.wandb.project_name, config=config)
+    wandb.init(project=config.wandb.project_name, config=config, dir='~/scratch/wandb')
 
     # set up the dataset
     logger.info("loading datasets")
@@ -167,8 +167,9 @@ if __name__ == "__main__":
                     # "filter_by_accuracy": {"value": "True"},
                     # model parameters
                     "model.from_pretrained": {
-                        "value": "model_checkpoints/evcxg3kc/"  # n_reg 50 exposure task
+                        # "value": "model_checkpoints/evcxg3kc/"  # n_reg 50 exposure task
                         # "value": "model_checkpoints/vc7i09gs/"  # n_reg 2 concurrent 2
+                        "value": None
                     },  # !
                     "model.n_layers": {"value": 2},
                     "model.n_heads": {"values": [2]},
@@ -177,7 +178,7 @@ if __name__ == "__main__":
                     # trainer parameters
                     "trainer.freeze_embeddings": {"value": "False"},  # !
                     "trainer.batch_size": {"value": 64},
-                    "trainer.epochs": {"value": 40},
+                    "trainer.epochs": {"value": 60},
                     "trainer.learning_rate": {"value": 1e-3},
                     "trainer.weight_decay": {"value": 3e-5},
                     "trainer.checkpoint_dir": {"value": "model_checkpoints/"},
@@ -188,8 +189,8 @@ if __name__ == "__main__":
                     "dataset.seq_len": {"value": 14},
                     "dataset.concurrent_items": {"value": 3},
                     "dataset.n_items": {"value": 50},
-                    "dataset.concurrent_reg": {"values": [2]},  # !
-                    "dataset.n_reg": {"values": [2]},  # !
+                    "dataset.concurrent_reg": {"values": [4]},  # !
+                    "dataset.n_reg": {"values": [4]},  # !
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
                     "dataset.ignore_prob": {"value": 0.5},
@@ -211,5 +212,5 @@ if __name__ == "__main__":
         wandb.agent(config.wandb.sweep_id, count=1)
 
     else:  # run as normal in a single-run fashion using wandb only for logging
-        wandb.init(project=config.wandb.project_name, config=config)
+        # wandb.init(project=config.wandb.project_name, config=config)
         main(config)

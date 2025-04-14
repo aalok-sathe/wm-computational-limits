@@ -4,13 +4,14 @@
 
 # Request a GPU partition node and access to 1 GPU
 #SBATCH -p 3090-gcondo --gres=gpu:1
-####### SBATCH -p l40s-gcondo --gres=gpu:1
+#####SBATCH -p l40s-gcondo --gres=gpu:1
 #SBATCH --mem-per-cpu 20G
 
-#SBATCH -a 1-29%50
-#SBATCH -t 1:37:00 ##shorter time (1hrs) because fewer training examples if 10_000, but make it 2hrs for 100_000
+#SBATCH -a 1-15%50
+#SBATCH -t 2:00:00 ##shorter time (1hrs) because fewer training examples if 10_000, but make it 2hrs for 100_000
 #SBATCH -o batch-output/training_run_%A_%a.out
 
+set -x
 
 . .venv/bin/activate
 
@@ -96,5 +97,42 @@ echo "find sample run at batch-output/training_run_%A_1.out"
 
 # Sweep 12a: n_reg 2, concurrent 2
 # python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/vc7i09gs
-# Sweep 12a: n_reg 3, concurrent 3
-python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/h3kgrek1
+# Sweep 12b: n_reg 3, concurrent 3
+# python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/h3kgrek1
+# Sweep 12c: n_reg 50, concurrent 1 (for symbol pretraining)
+# python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/evcxg3kc
+
+# Sweep 13a n_reg 2, concurrent 2 with 8-dim embeddings
+# python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/o7fmq18y
+# Sweep 13b: n_reg 3, concurrent 3 with 8-dim embeddings
+# python3 -m workingmem  --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/gsbkbheh 
+
+#### FROZEN EMBEDDINGS!
+# Sweep 14a FROM PRETRAINED [evcxg3kc]! n_reg 2, concurrent 2 with 32-dim embeddings, 40 epochs
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/xs7tnwgc #--array_task_id "$SLURM_ARRAY_TASK_ID"
+# Sweep 14b FROM PRETRAINED [evcxg3kc]! n_reg 3, concurrent 3 with 32-dim embeddings, 40 epochs
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/uzrvtykz #--array_task_id "$SLURM_ARRAY_TASK_ID"
+# Sweep 14c FROM PRETRAINED [vc7i09gs]! n_reg 3, concurrent 3 with 32-dim embeddings, 40 epochs CANCELLED
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/qryq9z1q 
+
+#### WARM EMBEDDINGS!
+# Sweep 14a FROM PRETRAINED [evcxg3kc]! n_reg 2, concurrent 2 with 32-dim embeddings, 40 epochs
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/gp9hkgwc
+# Sweep 14b FROM PRETRAINED [evcxg3kc]! n_reg 3, concurrent 3 with 32-dim embeddings, 40 epochs
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/ce8lnv4r
+# Sweep 14c FROM PRETRAINED [vc7i09gs]! n_reg 3, concurrent 3 with 32-dim embeddings, 40 epochs
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/72e6vqq7 
+
+
+#### wm-comp-limits-1
+# Sweep 1: n_reg 5, concurrent 1--5, seq_len 14, n_train 100_000
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/1e53k4tn # concurrent 1
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/1ohh210b # concurrent 2
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/olt8ye2v # concurrent 3
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/d6lo7sid # concurrent 4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/2h3s5i1j # concurrent 5 [5,5]
+#
+
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/8l957ug3 # 3,3
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/aacwus5y # 2,2
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/hez1hokq # 4,4
