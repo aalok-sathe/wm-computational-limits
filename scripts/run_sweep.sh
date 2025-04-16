@@ -7,7 +7,7 @@
 #####SBATCH -p l40s-gcondo --gres=gpu:1
 #SBATCH --mem-per-cpu 20G
 
-#SBATCH -a 1-15%50
+#SBATCH -a 1-15%20
 #SBATCH -t 2:00:00 ##shorter time (1hrs) because fewer training examples if 10_000, but make it 2hrs for 100_000
 #SBATCH -o batch-output/training_run_%A_%a.out
 
@@ -136,3 +136,12 @@ echo "find sample run at batch-output/training_run_%A_1.out"
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/8l957ug3 # 3,3
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/aacwus5y # 2,2
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/hez1hokq # 4,4
+
+# Sweep 2: pre-training for split-set control
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/iiu16j21 # split set true
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/c2hoksay # split set false
+# now, we fine-tune on 3, 3 with these pretraining conditions 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/rmc4grdu # split set true, concurrent 3, n_reg 3
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/m9rs053w # split set false, concurrent 3, n_reg 3
+
+# Sweep R: replicate the split set stuff but with 128-dim

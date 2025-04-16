@@ -56,7 +56,7 @@ class MainConfig:
     seed = None
     # for array jobs, the task id is useful to, e.g., resume from the Xth pretrained model
     array_task_id: typing.Union[int, None] = None
-    filter_by_accuracy: bool = True
+    filter_by_accuracy: bool = None
 
     def __post_init__(self):
         logger.info(f"running post-init hook to set seeds to {self.seed}")
@@ -169,15 +169,17 @@ if __name__ == "__main__":
                     "model.from_pretrained": {
                         # "value": "model_checkpoints/evcxg3kc/"  # n_reg 50 exposure task
                         # "value": "model_checkpoints/vc7i09gs/"  # n_reg 2 concurrent 2
+                        # "value": "model_checkpoints/c2hoksay"  # split set false
+                        # "value": "model_checkpoints/iiu16j21"  # split set true
                         "value": None
                     },  # !
                     "model.n_layers": {"value": 2},
                     "model.n_heads": {"values": [2]},
-                    "model.d_model": {"values": [32]},  # !
+                    "model.d_model": {"values": [128]},  # !
                     # "model.seed": {"values": [42, 43, 44, 45]},
                     # trainer parameters
                     "trainer.freeze_embeddings": {"value": "False"},  # !
-                    "trainer.batch_size": {"value": 64},
+                    "trainer.batch_size": {"value": 128},
                     "trainer.epochs": {"value": 60},
                     "trainer.learning_rate": {"value": 1e-3},
                     "trainer.weight_decay": {"value": 3e-5},
@@ -187,10 +189,11 @@ if __name__ == "__main__":
                     "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
                     "dataset.seq_len": {"value": 14},
-                    "dataset.concurrent_items": {"value": 3},
+                    "dataset.concurrent_items": {"value": 4},
                     "dataset.n_items": {"value": 50},
-                    "dataset.concurrent_reg": {"values": [4]},  # !
-                    "dataset.n_reg": {"values": [4]},  # !
+                    "dataset.concurrent_reg": {"values": [2]},  # !
+                    "dataset.n_reg": {"values": [2]},  # !
+                    "dataset.global_split_set_control": {"value": "True"},
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
                     "dataset.ignore_prob": {"value": 0.5},
