@@ -86,6 +86,10 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                 )
                 seconds_waiting = 0
                 while not train_path.exists():
+                    if seconds_waiting % 60 == 0:
+                        logger.warning(
+                            f"waiting {seconds_waiting / 60} min for {train_path} to be generated"
+                        )
                     seconds_waiting += 1
                     if seconds_waiting > 7 * 60:
                         # timeout
@@ -144,7 +148,8 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             ) as k,
         ):
             yaml.dump(self._metadata(), f, Dumper=yaml.SafeDumper)
-            yaml.dump(self._metadata(), k, Dumper=yaml.SafeDumper)
+            # yaml.dump(self._metadata(), k, Dumper=yaml.SafeDumper)
+            k.write("\n")
 
         total_examples = sum(
             getattr(self.config, f"n_{split}") for split in ["train", "val", "test"]
