@@ -78,6 +78,7 @@ class TrainingConfig:
 
     logging_strategy: str = "epoch"  # log every X epochs or X steps?
     logging_steps: int = 1  # log every X epochs/steps
+    log_predictions: typing.Union[bool, None] = None
 
     # log X many times per epoch: the # of steps to log after is determined
     # by the dataset length and batch size
@@ -345,15 +346,18 @@ class ModelWrapper(ABC):
                     self.epoch * len(dataset) / training_config.batch_size
                 )
 
-        predictions_table = wandb.Table(
-            columns=[
-                "epoch",  # so that we can observe the evolution of the model's predictions over time
-                "example_ix",
-                "eval_example",
-                "eval_prediction",
-                "eval_labels",
-            ]
-        )
+        if training_config.log_predictions:
+            predictions_table = wandb.Table(
+                columns=[
+                    "epoch",  # so that we can observe the evolution of the model's predictions over time
+                    "example_ix",
+                    "eval_example",
+                    "eval_prediction",
+                    "eval_labels",
+                ]
+            )
+        else:
+            predictions_table = None
 
         # set the model up for training
         # set up the optimizer
