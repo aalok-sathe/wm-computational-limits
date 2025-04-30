@@ -7,8 +7,8 @@
 #####SBATCH -p l40s-gcondo --gres=gpu:1
 #SBATCH --mem-per-cpu 20G
 
-#SBATCH -a 1-15%20
-#SBATCH -t 2:00:00 ##shorter time (1hrs) because fewer training examples if 10_000, but make it 2hrs for 100_000
+#SBATCH -a 1-20%20
+#SBATCH -t 1:35:00 ##shorter time (1hrs) because fewer training examples if 10_000, but make it 2hrs for 100_000
 #SBATCH -o batch-output/training_run_%A_%a.out
 
 set -x
@@ -124,7 +124,9 @@ echo "find sample run at batch-output/training_run_%A_1.out"
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-0/72e6vqq7 
 
 
-#### wm-comp-limits-1
+##########################################
+#### wm-comp-limits-1                 ####
+##########################################
 # Sweep 1: n_reg 5, concurrent 1--5, seq_len 14, n_train 100_000
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/1e53k4tn # concurrent 1
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/1ohh210b # concurrent 2
@@ -144,4 +146,24 @@ echo "find sample run at batch-output/training_run_%A_1.out"
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/rmc4grdu # split set true, concurrent 3, n_reg 3
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/m9rs053w # split set false, concurrent 3, n_reg 3
 
-# Sweep R: replicate the split set stuff but with 128-dim
+# Sweep R: exactly replicate the split set stuff but with 128-dim
+# PRETRAIN
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/nxgusfzl # split set true
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/b931g4g8 # split set false
+
+
+# FINETUNE 
+#somehow seq_len was 25???
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/h0x7w7g3 # split set false 3,3 # this is a comparison vanilla training run
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/677uqtug # pretrained on split set false 3,3
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/blyrm120 # pretrained on split set false 3,3
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/7qdu9mqj # pretrained on split set true 2,2
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/edun0q37 # pretrained on split set true 3,3
+
+# FINETUNE 
+# seq len 14
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/y81xhmif # pretrained on split set true 2,2
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/ # pretrained on split set false 2,2
+
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/ # pretrained on split set true 3,3
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-1/ # pretrained on split set false 3,3

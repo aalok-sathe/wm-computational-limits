@@ -81,7 +81,11 @@ def main(config: MainConfig):
     as per config. wandb is used for logging regardless of sweep or not.
     """
     logger.info(f"running main with config: {config}")
-    wandb.init(project=config.wandb.project_name, config=config, dir="~/scratch/wandb")
+    wandb.init(
+        project=config.wandb.project_name,
+        config=config,
+        dir=str(Path("~/scratch/wandb").expanduser().resolve()),
+    )
 
     # set up the dataset
     logger.info("loading datasets")
@@ -168,10 +172,10 @@ if __name__ == "__main__":
                     # model parameters
                     "model.from_pretrained": {
                         # "value": "model_checkpoints/evcxg3kc/"  # n_reg 50 exposure task
-                        # "value": "model_checkpoints/vc7i09gs/"  # n_reg 2 concurrent 2
-                        # "value": "model_checkpoints/c2hoksay"  # split set false
-                        # "value": "model_checkpoints/iiu16j21"  # split set true
-                        "value": None
+                        #
+                        # "value": "model_checkpoints/b931g4g8"  # split set false
+                        "value": "model_checkpoints/nxgusfzl"  # split set true
+                        # "value": None
                     },  # !
                     "model.n_layers": {"value": 2},
                     "model.n_heads": {"values": [2]},
@@ -179,21 +183,24 @@ if __name__ == "__main__":
                     # "model.seed": {"values": [42, 43, 44, 45]},
                     # trainer parameters
                     "trainer.freeze_embeddings": {"value": "False"},  # !
+                    # "trainer.freeze_attention": {"value": "False"},  # ! NOT IMPLEMENTED
                     "trainer.batch_size": {"value": 128},
-                    "trainer.epochs": {"value": 60},
+                    "trainer.epochs": {"value": 60},  # !
                     "trainer.learning_rate": {"value": 1e-3},
                     "trainer.weight_decay": {"value": 3e-5},
                     "trainer.checkpoint_dir": {"value": "model_checkpoints/"},
                     # dataset parameters
+                    "dataset.seq_len": {"value": 14},  # !
+                    "dataset.concurrent_reg": {"values": [3]},  # !
+                    "dataset.n_reg": {"values": [3]},  # !
                     "dataset.n_train": {"value": 100_000},  # !
+                    "dataset.concurrent_items": {"value": 4},
+                    #
                     "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
-                    "dataset.seq_len": {"value": 14},
-                    "dataset.concurrent_items": {"value": 4},
                     "dataset.n_items": {"value": 50},
-                    "dataset.concurrent_reg": {"values": [2]},  # !
-                    "dataset.n_reg": {"values": [2]},  # !
-                    "dataset.global_split_set_control": {"value": "True"},
+                    "dataset.global_split_set_control": {"value": "False"},  #!!!
+                    # "dataset.local_split_set_control": {"value": "False"},  #!!! NOT IMPLEMENTED
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
                     "dataset.ignore_prob": {"value": 0.5},
@@ -202,6 +209,8 @@ if __name__ == "__main__":
         )
 
         sweep_id = wandb.sweep(sweep_config, project=config.wandb.project_name)
+        # dump all the parameters of this sweep to stdout
+        logger.info(f"parameters of {sweep_id}:\n{yaml.dump(sweep_config)}")
         logger.info(f"created sweep with id: {sweep_id} !")
 
     elif config.wandb.run_sweep:
