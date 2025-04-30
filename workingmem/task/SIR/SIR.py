@@ -34,7 +34,7 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     """total number of registers in vocab to draw from"""
     n_items: int = 50
     """total number of items in vocab to draw from"""
-    seq_len: int = 10
+    seq_len: int = 14
     """ length of a trial sequence"""
     concurrent_reg: int = 2
     """number of registers to use concurrently within a trial. if this
@@ -61,6 +61,13 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     same_diff_prob: float = 0.5
     """probability of a 'same' outcome on a particular register. varies independently of
         store/ignore instruction"""
+    global_split_set_control: bool = None
+    """control condition where each item is assigned to a single register, so that it
+        cannot occur with any other register. this is used in O'Rielly & Frank (2002)
+        and Soni, Traylor, et al (2025, in prep.) as a control for requiring 
+        role-addressable gating (i.e., there's never going to be a case when the same
+        item is potentially stored across multiple registers and it needs to be 
+        differentiated)."""
 
     # seed: int = None
     n_train: int = 100_000
@@ -275,10 +282,48 @@ class SIRDataset(GeneratedCachedDataset):
         ) % (self.config.n_reg - self.config.heldout_reg)
 
         # sample w/o replacement
-        # regs_chosen now contains the indexes of the registers to use
+        # regs_chosen now contains the indexes of the registers to use.
+        # when n_reg == concurrent_reg, this just makes
+        # regs_chosen == reg_range
         regs_chosen: np.ndarray[int] = np.random.choice(
             reg_range, self.config.concurrent_reg, replace=False
         )
+
+        register_item_pool = {}
+        # typically, we'll be using split-set control when n_reg = 2 and
+        # concurrent_reg = 2. then, we'll do a very simple serial mapping of
+        # item ranges to each register.
+        if self.config.global_split_set_control:
+            item_range = np.arange(self.config.n_items - self.config.heldout_items)
+            # split the item_range up roughly equally into `concurrent_regs` parts
+            # and assign each part to a register
+            items_per_reg = (item_range[-1] + 1) // self.config.concurrent_reg
+            # it isn't the best idea to repeat per trial, but it should be deterministic
+            # and also shouldn't be too costly
+            how_many = self.config.concurrent_items // self.config.concurrent_reg
+            assert (
+                how_many * self.config.concurrent_reg == self.config.concurrent_items
+            ), (
+                f"something about the number of items per register is "
+                f"wrong and it doesn't add up to the {self.config.concurrent_items=}"
+            )
+
+            for i in range(self.config.concurrent_reg):
+                this_reg_item_range = item_range[
+                    i * items_per_reg : (i + 1) * items_per_reg
+                ]
+                register_item_pool[regs_chosen[i]] = np.random.choice(
+                    this_reg_item_range, how_many, replace=False
+                )
+
+            # make sure each register has at least two items associated with it
+            assert all(len(v) >= 2 for v in register_item_pool.values()), (
+                f"register_item_pool doesn't have at least two items "
+                f"associated with each register: {register_item_pool}"
+            )
+
+        # in the absence of global_split_set_control, we just sample `concurrent_items`
+        # uniformly from the item pool
         items_chosen: np.ndarray[int] = np.random.choice(
             # WLG, heldout items are numerically at the end of the item pool, and
             # so far we aren't doing anything like locality or wraparound with them
@@ -323,11 +368,19 @@ class SIRDataset(GeneratedCachedDataset):
                 reg_state[this_reg_idx] == -1
                 or np.random.rand() > self.config.same_diff_prob
             ):
+                # depending on whether we're using global_split_set_control, we either
+                # sample a new item from the register_item_pool mapping for this register
+                # or more broadly from items_chosen
+                this_trial_item_pool = (
+                    register_item_pool[this_reg_idx]
+                    if self.config.global_split_set_control
+                    else items_chosen
+                )
                 # NOTE this line by itself doesn't guarantee that the item is new
-                this_item = np.random.choice(items_chosen, p=None)
+                this_item = np.random.choice(this_trial_item_pool, p=None)
                 # so we need this follow-up loop to keep drawing until it's new
                 while this_item == reg_state[this_reg_idx]:
-                    this_item = np.random.choice(items_chosen, p=None)
+                    this_item = np.random.choice(this_trial_item_pool, p=None)
                 this_label = diff
             else:
                 this_item = reg_state[this_reg_idx]
@@ -353,6 +406,12 @@ class SIRDataset(GeneratedCachedDataset):
             "regs_used": tuple(regs_chosen.tolist()),
             "items_used": tuple(items_chosen.tolist()),
             "locality": self.config.locality,
+            # lots of gymnastics here to make sure the register_item_pool serializable
+            "split_set_control": tuple(
+                (
+                    {int(k): tuple(v.tolist()) for k, v in register_item_pool.items()}
+                ).items()
+            ),
         }
 
     @property
