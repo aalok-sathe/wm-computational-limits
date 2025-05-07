@@ -68,6 +68,7 @@ class SIRConfig(GeneratedCachedDatasetConfig):
         role-addressable gating (i.e., there's never going to be a case when the same
         item is potentially stored across multiple registers and it needs to be 
         differentiated)."""
+    local_split_set_control: bool = None
 
     # seed: int = None
     n_train: int = 100_000
