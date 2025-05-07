@@ -185,7 +185,14 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             [
                 f"{k}={v}"
                 for k, v in sorted(self._metadata().items())
-                if k not in ("basedir", "rootdir", "split", "generate")
+                if k
+                not in (
+                    "basedir",
+                    "rootdir",
+                    "split",
+                    "generate",
+                    "local_split_set_control",
+                )  # NOTE! local split set control is here for now.
             ]
         )
         H = sha1(attr_str.encode()).hexdigest()[: self._hash_length].upper()
