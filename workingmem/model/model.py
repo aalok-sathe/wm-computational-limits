@@ -176,6 +176,10 @@ class ModelWrapper(ABC):
         # 1. load config
         with open(checkpoint_dir / "config.yaml", "r") as f:
             _config = ModelConfig(**yaml.load(f, Loader=yaml.FullLoader))
+            # update the config with the checkpoint dir as the new `from_pretrained` path
+            # NOTE: this is unnecessary if this method was called from __init__ since the config
+            # would have been set to the checkpoint dir already---that is the preferred way.
+            self.config.from_pretrained = checkpoint_dir
         logger.info(f"loaded config for pretrained model:\n\t{_config}")
 
         # 2. load history
@@ -532,6 +536,7 @@ class ModelWrapper(ABC):
         dataset: GeneratedCachedDataset,
         train_epoch: int = None,
         predictions_table: wandb.Table = None,
+        batch_size: int = 128,
     ) -> typing.Tuple[float, float]:
         """
         Returns the average loss and accuracy of the model on the dataset (assumed eval or test split)
@@ -548,7 +553,7 @@ class ModelWrapper(ABC):
 
         eval_dataloader = DataLoader(
             dataset,
-            batch_size=1,  # TODO, should we parameterize this?
+            batch_size=batch_size,  # TODO, should we parameterize this?
             shuffle=False,
             num_workers=1,
             pin_memory=True,
