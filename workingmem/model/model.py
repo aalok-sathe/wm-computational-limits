@@ -42,7 +42,7 @@ class ModelConfig:
     attn_only: bool = True
     n_layers: int = 2
     n_heads: int = 2
-    n_ctx: int = 500  # this should be set so that it is definitely longer than the longest trial sequence length
+    n_ctx: int = 1300  # this should be set so that it is definitely longer than the longest trial sequence length
     d_model: int = 128  # dimensionality of the residual stream and embeddings
     d_mlp: int = 0
     act_fn: str = "relu"  # from HookedTransformerConfig: "Must be set unless using an attn-only model."
@@ -523,7 +523,9 @@ class ModelWrapper(ABC):
             )
 
     def test(
-        self, dataset: GeneratedCachedDataset, test_predictions_table: wandb.Table
+        self,
+        dataset: GeneratedCachedDataset,
+        test_predictions_table: wandb.Table = None,
     ):
         """
         evaluates the model on the test set
