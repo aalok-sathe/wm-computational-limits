@@ -35,7 +35,7 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     n_items: int = 50
     """total number of items in vocab to draw from"""
     seq_len: int = 14
-    """ length of a trial sequence"""
+    """length of a trial sequence"""
     concurrent_reg: int = 2
     """number of registers to use concurrently within a trial. if this
     number is too high, we risk a simple heuristic solution such as: 
@@ -61,14 +61,14 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     same_diff_prob: float = 0.5
     """probability of a 'same' outcome on a particular register. varies independently of
         store/ignore instruction"""
-    global_split_set_control: bool = None
+    global_split_set_control: typing.Union[bool, None] = None
     """control condition where each item is assigned to a single register, so that it
         cannot occur with any other register. this is used in O'Rielly & Frank (2002)
         and Soni, Traylor, et al (2025, in prep.) as a control for requiring 
         role-addressable gating (i.e., there's never going to be a case when the same
         item is potentially stored across multiple registers and it needs to be 
         differentiated)."""
-    local_split_set_control: bool = None
+    local_split_set_control: typing.Union[bool, None] = None
 
     # seed: int = None
     n_train: int = 100_000

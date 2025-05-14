@@ -181,9 +181,14 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         return getattr(self.config, f"n_{self.config.split}")
 
     def _attr_str_hash(self) -> typing.Tuple[str, str]:
+        def bool_to_none(v):
+            if isinstance(v, bool):
+                return v if v else None
+            return v
+
         attr_str = ",".join(
             [
-                f"{k}={v}"
+                f"{k}={bool_to_none(v)}"
                 for k, v in sorted(self._metadata().items())
                 if k
                 not in (
@@ -191,7 +196,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                     "rootdir",
                     "split",
                     "generate",
-                    "local_split_set_control",
+                    # "local_split_set_control",
                 )  # NOTE! local split set control is here for now.
             ]
         )
