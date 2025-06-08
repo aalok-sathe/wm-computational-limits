@@ -42,31 +42,40 @@ class ModelConfig:
     attn_only: bool = True
     n_layers: int = 2
     n_heads: int = 2
-    n_ctx: int = 1300  # this should be set so that it is definitely longer than the longest trial sequence length
+    n_ctx: int = 1205  # this should be set so that it is longer than the longest trial sequence length we expect to use with the model. i.e., 4 * seq_len + change. for 300, we need at least 1201.
     d_model: int = 128  # dimensionality of the residual stream and embeddings
     d_mlp: int = 0
-    act_fn: str = "relu"  # from HookedTransformerConfig: "Must be set unless using an attn-only model."
-    d_vocab: int = None  # vocab is determined by the tokenizer
+    # act_fn: str = "relu"  # from HookedTransformerConfig: "must be set unless using an attn-only model."
+    d_vocab: int = None  # vocab dim is determined by the tokenizer
     init_weights: bool = True
     seed: typing.Union[int, None] = None
+    positional_embedding_type: str = (
+        "rotary"  # type of positional embedding to use, e.g. "rotary", "standard",
+    )
+    d_head: int = 128
+    # d_head: int = 128
 
-    @property
-    def d_head(self) -> int:
-        """calculate the dimensionality of the attention heads in the model as per `d_model` and `n_heads`"""
-        d_head = self.d_model // self.n_heads
-        if d_head * self.n_heads == self.d_model:
-            return d_head
-        raise ValueError(
-            f"the model dimensionality {self.d_model} is not divisible by the number of heads "
-            f"{self.n_heads} leading to an incompatible head dimensionality {d_head}"
-        )
+    # NOTE: EDIT 2025-06-05: we set the head dim to be the same as the model dimensionality irrespective of the number of heads.
+    # so, the number of parameters will grow faster now
+    # @property
+    # def d_head(self) -> int:
+    #     """calculate the dimensionality of the attention heads in the model as per `d_model` and `n_heads`"""
+    #     return self.d_model
+
+    #     d_head = self.d_model // self.n_heads
+    #     if d_head * self.n_heads == self.d_model:
+    #         return d_head
+    #     raise ValueError(
+    #         f"the model dimensionality {self.d_model} is not divisible by the number of heads "
+    #         f"{self.n_heads} leading to an incompatible head dimensionality {d_head}"
+    #     )
 
 
 @dataclasses.dataclass
 class TrainingConfig:
     freeze_embeddings: bool = None
-    epochs: int = 50
-    optimizer: str = "adamw"  # do not change this!
+    epochs: int = 60
+    optimizer: str = "adamw"
     learning_rate: float = 5e-5
     weight_decay: float = 0.0003
     # this is where checkpoints are saved, if supplied.
@@ -137,7 +146,7 @@ class ModelWrapper(ABC):
             logger.info(f"initializing model from scratch with config: {config}")
             self.model = HookedTransformer(
                 HookedTransformerConfig(
-                    d_head=config.d_head,
+                    # d_head=config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
                     **{
                         k: v
                         for k, v in dataclasses.asdict(config).items()
@@ -145,6 +154,18 @@ class ModelWrapper(ABC):
                     },
                 )
             )
+
+            # separately load the embeddings using torch.nn.Embedding and use the `scale_grad_by_freq`
+            # option from the config to scale the gradients by the frequency of the tokens within a minibatch
+
+            # TODO
+            # self.model.embed = torch.nn.Embedding(
+            #     num_embeddings=config.d_vocab,
+            #     embedding_dim=config.d_model,
+            #     padding_idx=0,
+            #     scale_grad_by_freq=config.scale_grad_by_freq,
+            # )
+
         else:
             # if we're asked to load from a pretrained checkpoint, we load the model
             # using the stored config rather than the supplied config
@@ -342,6 +363,7 @@ class ModelWrapper(ABC):
             epoch: int = 0
             epoch_step: int = 0
             best_val_loss: float = np.inf
+            best_val_acc: float = 0.0
             best_val_epoch: int = -1
 
             @property
@@ -393,18 +415,23 @@ class ModelWrapper(ABC):
             self.history[-1].epoch = state.epoch
 
             for state.epoch_step, inputs in enumerate(train_dataloader):
-                loss = self._step(inputs)
-                loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
+                if state.best_val_acc >= 0.999:
+                    logger.warning(
+                        f"best validation accuracy {state.best_val_acc:.3f} reached, skipping training loop to directly evaluate the model"
+                    )
+                else:
+                    loss = self._step(inputs)
+                    loss.backward()
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-                wandb.log(
-                    wandb_logged := {
-                        **dataclasses.asdict(state),
-                        "step": state.step,
-                        "train_loss": loss.item(),
-                    }
-                )
+                    wandb.log(
+                        wandb_logged := {
+                            **dataclasses.asdict(state),
+                            "step": state.step,
+                            "train_loss": loss.item(),
+                        }
+                    )
 
                 # evaluate the model when you reach the logging step within the epoch
                 log_every_steps = (
@@ -480,6 +507,7 @@ class ModelWrapper(ABC):
                     # update latest known eval_acc
                     self.history[-1].eval_acc = float(eval_acc)
                     self.save_checkpoint(training_config.checkpoint_dir)
+
                 # end eval at the end of epoch
                 ################################
 
@@ -572,8 +600,8 @@ class ModelWrapper(ABC):
                 )
                 # we have a single loss value per batch (this is a fine approximation)
                 losses += [loss.item()]
-                predictions += answers.detach().tolist()
-                actual_labels += labels.detach().tolist()
+                predictions += [answers.detach().reshape(-1)]
+                actual_labels += [labels.detach().reshape(-1)]
 
                 # log the first batch of eval examples and predictions to `wandb`
                 if train_epoch is not None and predictions_table is not None:
@@ -588,14 +616,20 @@ class ModelWrapper(ABC):
                             dataset.tokenizer.decode(
                                 labels[example_ix].detach().tolist()
                             ),
-                            # prob_dicts[
-                            #     example_ix
-                            # ],  # explicit probability distribution over vocabulary
                         )
+
+        # we want to aggregate over each example in val set rather than each individual answer location
+        eval_num_correct = np.sum(
+            all(predictions[i] == actual_labels[i]) for i in range(len(actual_labels))
+        )
+        logger.info(f"number correct: {eval_num_correct} out of {len(actual_labels)}")
 
         return (
             np.mean(losses),
-            np.mean(np.array(predictions) == np.array(actual_labels)),
+            eval_num_correct / len(actual_labels),
+            # also return actual numbers
+            # sum(predictions == actual_labels),
+            # len(actual_labels),  # accuracy
         )
 
     def _step(
@@ -656,7 +690,7 @@ def compute_masked_loss(
             and `answer_locations` which provides a 0-1 mask over which tokens in the sequence should be
             considered 'predictions' (only these are used for loss computation)
         - `return_outputs` will cause the method to return the gathered logits, argmax-softmaxed logit answers, and true labels
-            all as a dictionary with the keys loss, gathered_logits, gathered_answers, gathered_labels
+            all as a dictionary with the keys `loss`, `gathered_logits`, `gathered_answers`, `gathered_labels`
 
     Example:
     --------
