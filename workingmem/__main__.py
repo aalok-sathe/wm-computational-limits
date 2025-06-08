@@ -34,8 +34,8 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-1"
-    method: str = "random"
+    project_name: str = "wm-comp-limit-3"
+    method: str = "bayes"
     metric: dict = dataclasses.field(
         default_factory=lambda: {"goal": "maximize", "name": "eval_acc"}
     )
@@ -168,39 +168,58 @@ if __name__ == "__main__":
         sweep_config.update(
             {
                 "parameters": {
+                    ################################
+                    # global experiment parameters
+                    ################################
                     # "filter_by_accuracy": {"value": "True"},
+                    ################################
                     # model parameters
+                    ################################
                     "model.from_pretrained": {
                         # "value": "model_checkpoints/evcxg3kc/"  # n_reg 50 exposure task
                         #
                         # "value": "model_checkpoints/b931g4g8"  # split set false
-                        "value": "model_checkpoints/nxgusfzl"  # split set true
-                        # "value": None
+                        # "value": "model_checkpoints/nxgusfzl"  # split set true
+                        "value": None
                     },  # !
                     "model.n_layers": {"value": 2},
                     "model.n_heads": {"values": [2]},
-                    "model.d_model": {"values": [128]},  # !
+                    "model.d_model": {"values": [256]},  # !
+                    "model.d_head": {"value": 128},  # !
                     # "model.seed": {"values": [42, 43, 44, 45]},
+                    ################################
                     # trainer parameters
+                    ################################
                     "trainer.freeze_embeddings": {"value": "False"},  # !
-                    # "trainer.freeze_attention": {"value": "False"},  # ! NOT IMPLEMENTED
+                    # "trainer.freeze_attention": {"value": "False"},  # NOTE: NOT IMPLEMENTED
                     "trainer.batch_size": {"value": 128},
                     "trainer.epochs": {"value": 60},  # !
                     "trainer.learning_rate": {"value": 1e-3},
+                    # "trainer.learning_rate": {
+                    #     "min": 1e-5,
+                    #     "max": 1,
+                    #     "distribution": "uniform",
+                    # },
                     "trainer.weight_decay": {"value": 3e-5},
+                    # "trainer.weight_decay": {
+                    #     "min": 0,
+                    #     "max": 1e-2,
+                    #     "distribution": "uniform",
+                    # },
                     "trainer.checkpoint_dir": {"value": "model_checkpoints/"},
+                    ################################
                     # dataset parameters
-                    "dataset.seq_len": {"value": 14},  # !
-                    "dataset.concurrent_reg": {"values": [3]},  # !
-                    "dataset.n_reg": {"values": [3]},  # !
+                    ################################
+                    "dataset.seq_len": {"value": 300},  # !
+                    "dataset.concurrent_reg": {"value": 64},  # !
+                    "dataset.n_reg": {"value": 100},  # !
                     "dataset.n_train": {"value": 100_000},  # !
-                    "dataset.concurrent_items": {"value": 4},
-                    #
+                    "dataset.concurrent_items": {"values": [4]},  # !
                     "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
                     "dataset.n_items": {"value": 50},
                     "dataset.global_split_set_control": {"value": "False"},  #!!!
-                    # "dataset.local_split_set_control": {"value": "False"},  #!!! NOT IMPLEMENTED
+                    # "dataset.local_split_set_control": {"value": "False"},  # NOTE: NOT IMPLEMENTED
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
                     "dataset.ignore_prob": {"value": 0.5},
