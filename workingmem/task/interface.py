@@ -109,7 +109,8 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                     self._to_disk(data)
 
                     if self.config.load:
-                        self._load_split()
+                        self.data = data
+                        self._load_split()  # change this with self.data = data to trivially save some time
                 else:
                     logger.info(
                         f"no data found at {self.config.basedir}, and `generate` is set to False. "
@@ -121,6 +122,12 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         """
         loads the split from disk
         """
+        # if self.data is already loaded, we don't need to load it again
+        if hasattr(self, "data") and len(self.data) == getattr(
+            self.config, f"n_{self.config.split}"
+        ):
+            return
+
         split_path = self.config.basedir / f"{self.config.split}.yaml"
         with split_path.open("r") as f:
             self.data = yaml.load(f, Loader=yaml.SafeLoader)
