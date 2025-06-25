@@ -9,6 +9,7 @@ import numpy as np
 import tokenizers
 import torch
 import yaml
+import json
 
 logger = logging.getLogger("workingmem")
 
@@ -65,9 +66,9 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         rootdir = Path(self.config.rootdir).expanduser().resolve()
         self.config.basedir = rootdir / str(self)
 
-        train_path = self.config.basedir / "train.yaml"
-        eval_path = self.config.basedir / "val.yaml"
-        test_path = self.config.basedir / "test.yaml"
+        train_path = self.config.basedir / "train.json"
+        eval_path = self.config.basedir / "val.json"
+        test_path = self.config.basedir / "test.json"
         if train_path.exists() and eval_path.exists() and test_path.exists():
             # list contents of the directory
             logger.info(
@@ -91,7 +92,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                             f"waiting {seconds_waiting / 60} min for {train_path} to be generated"
                         )
                     seconds_waiting += 1
-                    if seconds_waiting > 7 * 60:
+                    if seconds_waiting > 15 * 60:
                         # timeout
                         logger.error(
                             f"timed out waiting {seconds_waiting / 60} min for {train_path} to be generated"
@@ -128,9 +129,10 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         ):
             return
 
-        split_path = self.config.basedir / f"{self.config.split}.yaml"
+        split_path = self.config.basedir / f"{self.config.split}.json"
+
         with split_path.open("r") as f:
-            self.data = yaml.load(f, Loader=yaml.SafeLoader)
+            self.data = json.load(f)
 
         assert len(self.data) == getattr(self.config, f"n_{self.config.split}"), (
             f"Mismatch in # of examples in {self.config.split} on disk at {split_path} ({len(self.data)}) and config value {getattr(self.config, 'n_' + self.config.split)}"
@@ -177,9 +179,11 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             logger.info(
                 f"writing {len(data)} examples to {split} at {self.config.basedir}"
             )
-            split_path = self.config.basedir / f"{split}.yaml"
+            split_path = self.config.basedir / f"{split}.json"
             with split_path.open("w") as f:
-                yaml.dump(data.tolist(), f, Dumper=yaml.SafeDumper, width=float("inf"))
+                # with gzip.open(split_path, "wt", encoding="utf-8") as f:
+                # yaml.dump(data.tolist(), f, Dumper=yaml.SafeDumper, width=float("inf"))
+                json.dump(data.tolist(), f)
 
     def __len__(self):
         assert getattr(self.config, f"n_{self.config.split}") == len(self.data), (
