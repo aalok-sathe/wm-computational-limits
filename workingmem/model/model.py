@@ -232,7 +232,7 @@ class ModelWrapper(ABC):
         # random weights, but we are about to overwrite them)
         self.model = HookedTransformer(
             HookedTransformerConfig(
-                d_head=_config.d_head,
+                # d_head=_config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
                 **{
                     k: v
                     for k, v in dataclasses.asdict(_config).items()
