@@ -48,12 +48,13 @@ class ModelConfig:
     # act_fn: str = "relu"  # from HookedTransformerConfig: "must be set unless using an attn-only model."
     d_vocab: int = None  # vocab dim is determined by the tokenizer
     init_weights: bool = True
-    seed: typing.Union[int, None] = None
+    seed: typing.Union[int, str, None] = (
+        None  # seeds passed as str must be convertible to int, e.g. "42" or "1234"
+    )
     positional_embedding_type: str = (
         "rotary"  # type of positional embedding to use, e.g. "rotary", "standard",
     )
     d_head: int = 128
-    # d_head: int = 128
 
     # NOTE: EDIT 2025-06-05: we set the head dim to be the same as the model dimensionality irrespective of the number of heads.
     # so, the number of parameters will grow faster now
@@ -76,18 +77,18 @@ class TrainingConfig:
     freeze_embeddings: bool = None
     epochs: int = 60
     optimizer: str = "adamw"
-    learning_rate: float = 5e-5
-    weight_decay: float = 0.0003
+    learning_rate: float = 1e-4
+    weight_decay: float = 0.0
     # this is where checkpoints are saved, if supplied.
     # if available, a wandb.run.sweep_id AND a model random seed will be appended
     # to the checkpoint directory name.
     # e.g. `model_checkpoints/{sweep_id}/{run_name}/`
     checkpoint_dir: typing.Union[str, None] = "model_checkpoints/"
-    batch_size: int = 128
+    batch_size: int = 256
 
     logging_strategy: str = "epoch"  # log every X epochs or X steps?
     logging_steps: int = 1  # log every X epochs/steps
-    log_predictions: typing.Union[bool, None] = None
+    log_predictions: typing.Union[bool, None] = True
 
     # log X many times per epoch: the # of steps to log after is determined
     # by the dataset length and batch size
@@ -125,6 +126,7 @@ class TrainingHistoryEntry:
 
     # outcomes
     eval_acc: float
+    eval_macro_acc: float
 
 
 class ModelWrapper(ABC):
@@ -144,6 +146,12 @@ class ModelWrapper(ABC):
         if config.from_pretrained is None:
             # if no pretrained path is supplied, we initialize the model from scratch
             logger.info(f"initializing model from scratch with config: {config}")
+            # set the seed for initializing the model weights
+            if config.seed is not None:
+                logger.info(f"setting random seed to {config.seed}")
+                torch.manual_seed(int(config.seed))
+                np.random.seed(int(config.seed))
+
             self.model = HookedTransformer(
                 HookedTransformerConfig(
                     # d_head=config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
@@ -332,19 +340,20 @@ class ModelWrapper(ABC):
                 learning_rate=training_config.learning_rate,
                 weight_decay=training_config.weight_decay,
                 freeze_embeddings=training_config.freeze_embeddings,
-                sweep_id=wandb.run.sweep_id,
-                run_name=wandb.run.name,
-                run_url=wandb.run.get_url(),
+                sweep_id=(wandb.run.sweep_id if wandb.run else None),
+                run_name=(wandb.run.name if wandb.run else None),
+                run_url=(wandb.run.get_url() if wandb.run else None),
                 checkpoint_dir=None,  # to be filled in later
                 epoch=0,  # to be filled in later
                 eval_acc=None,  # to be filled in later
+                eval_macro_acc=None,  # to be filled in later
             )
         ]
 
         train_dataloader = DataLoader(
             dataset,
             batch_size=training_config.batch_size,
-            shuffle=True,
+            shuffle=False,
             num_workers=1,
             pin_memory=True,
         )
@@ -365,6 +374,10 @@ class ModelWrapper(ABC):
             best_val_loss: float = np.inf
             best_val_acc: float = 0.0
             best_val_epoch: int = -1
+            # cumulative AUC, to be updated during training. this is simply measured as an integration of eval_acc over epochs
+            # so, the max possible value is 1.0 x num_epochs. for instance, a model that achieves 1.0 accuracy starting from
+            # epoch 0 will have cumAUC = num_epochs
+            cumAUC: float = 0.0
 
             @property
             def step(self):
@@ -392,6 +405,7 @@ class ModelWrapper(ABC):
             lr=training_config.learning_rate,
             weight_decay=training_config.weight_decay,
         )
+        scaler = torch.amp.grad_scaler.GradScaler()
 
         state = TrainingState()
         for state.epoch in tqdm(range(total := training_config.epochs), total=total):
@@ -412,6 +426,13 @@ class ModelWrapper(ABC):
                 for param in self.model.unembed.parameters():
                     param.requires_grad = False
 
+            # NOTE: as of yet NotImplemented: there is no such parameter.
+            # if training_config.freeze_attention:
+            #     for param in self.model.attn.parameters():
+            #         param.requires_grad = False
+            #     for param in self.model.attn_norm.parameters():
+            #         param.requires_grad = False
+
             self.history[-1].epoch = state.epoch
 
             for state.epoch_step, inputs in enumerate(train_dataloader):
@@ -420,9 +441,17 @@ class ModelWrapper(ABC):
                         f"best validation accuracy {state.best_val_acc:.3f} reached, skipping training loop to directly evaluate the model"
                     )
                 else:
-                    loss = self._step(inputs)
-                    loss.backward()
-                    optimizer.step()
+                    torch.cuda.empty_cache()
+                    with torch.amp.autocast(
+                        device_type="cuda" if torch.cuda.is_available() else "cpu"
+                    ):
+                        loss = self._step(inputs)
+
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                    # loss.backward()
+                    # optimizer.step()
                     optimizer.zero_grad()
 
                     wandb.log(
@@ -445,7 +474,7 @@ class ModelWrapper(ABC):
                 ):
                     ################################
                     # eval loop mid-epoch at however-many logging steps
-                    eval_loss, eval_acc = self.evaluate(
+                    eval_result = self.evaluate(
                         eval_dataset,
                         # we will not be passing the predictions table
                         # to the eval loop; predictions will be logged at
@@ -453,14 +482,21 @@ class ModelWrapper(ABC):
                         train_epoch=None,
                         predictions_table=None,
                     )
+                    eval_loss, eval_acc, eval_macro_acc = (
+                        eval_result["loss"],
+                        eval_result["acc"],
+                        eval_result["macro_acc"],
+                    )
                     # update latest known eval_acc
                     self.history[-1].eval_acc = float(eval_acc)
+                    self.history[-1].eval_macro_acc = float(eval_macro_acc)
                     wandb.log(
                         wandb_logged := {
                             **dataclasses.asdict(state),
                             "step": state.step,
                             "eval_loss": eval_loss,
                             "eval_acc": eval_acc,
+                            "eval_macro_acc": eval_macro_acc,
                         }
                     )
                     logger.info(
@@ -475,17 +511,26 @@ class ModelWrapper(ABC):
             ):
                 ################################
                 # eval once at the end of every epoch
-                eval_loss, eval_acc = self.evaluate(
+                eval_result = self.evaluate(
                     eval_dataset,
                     train_epoch=state.epoch,
                     # passing the predictions table to the eval loop for
                     # logging predictions and heatmaps over logits
                     predictions_table=predictions_table,
                 )
+                eval_loss, eval_acc, eval_macro_acc = (
+                    eval_result["loss"],
+                    eval_result["acc"],
+                    eval_result["macro_acc"],
+                )
                 # update latest known eval_acc
                 self.history[-1].eval_acc = float(eval_acc)
+                self.history[-1].eval_macro_acc = float(eval_macro_acc)
+                state.cumAUC += eval_acc * 1
 
-                logger.info(f"EVAL: {state.epoch = } {eval_loss = }, {eval_acc = }")
+                logger.info(
+                    f"EVAL: {state.epoch = } {eval_loss = }, {eval_acc = }, {eval_macro_acc = }, {state.cumAUC = }"
+                )
 
                 wandb.log(
                     wandb_logged := {
@@ -493,6 +538,9 @@ class ModelWrapper(ABC):
                         "step": state.step,
                         "eval_loss": eval_loss,
                         "eval_acc": eval_acc,
+                        "eval_macro_acc": eval_macro_acc,
+                        "cumAUC": state.cumAUC,
+                        "cumAUC_normalized": state.cumAUC / state.epoch,
                     }
                 )
                 logger.debug(f"{wandb_logged = }")
@@ -506,6 +554,7 @@ class ModelWrapper(ABC):
                     state.best_val_epoch = state.epoch
                     # update latest known eval_acc
                     self.history[-1].eval_acc = float(eval_acc)
+                    self.history[-1].eval_macro_acc = float(eval_macro_acc)
                     self.save_checkpoint(training_config.checkpoint_dir)
 
                 # end eval at the end of epoch
@@ -539,13 +588,19 @@ class ModelWrapper(ABC):
                     "test_labels",
                 ]
             )
-            test_loss, test_acc = self.test(test_dataset, test_table)
-            logger.info(f"TEST: {test_loss = }, {test_acc = }")
+            test_result = self.test(test_dataset, test_table)
+            test_loss, test_acc, test_macro_acc = (
+                test_result["loss"],
+                test_result["acc"],
+                test_result["macro_acc"],
+            )
+            logger.info(f"TEST: {test_loss = }, {test_acc = }, {test_macro_acc = }")
             wandb.log(
                 {
                     "epoch": state.epoch,
                     "test_loss": test_loss,
                     "test_acc": test_acc,
+                    "test_macro_acc": test_macro_acc,
                     "test_predictions": test_table,
                 }
             )
@@ -558,8 +613,7 @@ class ModelWrapper(ABC):
         """
         evaluates the model on the test set
         """
-        loss, acc = self.evaluate(dataset, predictions_table=test_predictions_table)
-        return loss, acc
+        return self.evaluate(dataset, predictions_table=test_predictions_table)
 
     def evaluate(
         self,
@@ -578,6 +632,8 @@ class ModelWrapper(ABC):
         train_epoch: `int` (optional)
             the epoch number of the training run that made a call to the evaluation run
         """
+        import einops
+
         logger.info("evaluating model")
         self.model.eval()
 
@@ -595,13 +651,18 @@ class ModelWrapper(ABC):
 
         with torch.no_grad():
             for eval_step, inputs in enumerate(eval_dataloader):
-                loss, answer_logits, answers, labels = self._step(
-                    inputs, return_outputs=True
-                )
+                torch.cuda.empty_cache()
+                with torch.amp.autocast(
+                    device_type="cuda" if torch.cuda.is_available() else "cpu"
+                ):
+                    loss, answer_logits, answers, labels = self._step(
+                        inputs, return_outputs=True
+                    )
                 # we have a single loss value per batch (this is a fine approximation)
                 losses += [loss.item()]
-                predictions += [answers.detach().reshape(-1)]
-                actual_labels += [labels.detach().reshape(-1)]
+                # answers and labels are of the shape (b, seq_len)
+                predictions += [answers.detach().cpu().numpy()]
+                actual_labels += [labels.detach().cpu().numpy()]
 
                 # log the first batch of eval examples and predictions to `wandb`
                 if train_epoch is not None and predictions_table is not None:
@@ -611,26 +672,35 @@ class ModelWrapper(ABC):
                             example_ix,  # corresponds to batch
                             inputs["tokens"][example_ix],
                             dataset.tokenizer.decode(
-                                answers[example_ix].detach().tolist()
+                                answers[example_ix].detach().cpu().tolist()
                             ),
                             dataset.tokenizer.decode(
-                                labels[example_ix].detach().tolist()
+                                labels[example_ix].detach().cpu().tolist()
                             ),
                         )
 
+        # now `predictions` is of shape (N_batches, batch_size, seq_len)
+        # we want it to be of shape (N_batches * batch_size, seq_len)
+        predictions = np.concat(predictions)
+        actual_labels = np.concat(actual_labels)
+        # predictions.shape = (N_batches * batch_size, seq_len)
+        # actual_labels.shape = (N_batches * batch_size, seq_len)
+
         # we want to aggregate over each example in val set rather than each individual answer location
         eval_num_correct = np.sum(
-            all(predictions[i] == actual_labels[i]) for i in range(len(actual_labels))
+            all(predictions[i] == actual_labels[i])
+            for i in range(actual_labels.shape[0])
         )
-        logger.info(f"number correct: {eval_num_correct} out of {len(actual_labels)}")
+        acc = np.mean(predictions == actual_labels)
 
-        return (
-            np.mean(losses),
-            eval_num_correct / len(actual_labels),
-            # also return actual numbers
-            # sum(predictions == actual_labels),
-            # len(actual_labels),  # accuracy
-        )
+        logger.info(f"percent trials correct: {acc:.5f}")
+        logger.info(f"# sequences correct: {eval_num_correct} / {len(actual_labels)}")
+
+        return {
+            "loss": np.mean(losses),
+            "acc": acc,
+            "macro_acc": eval_num_correct / len(actual_labels),
+        }
 
     def _step(
         self, inputs: typing.Dict[str, torch.Tensor], return_outputs=False
@@ -681,18 +751,24 @@ class ModelWrapper(ABC):
 def compute_masked_loss(
     logits: torch.Tensor,
     inputs: typing.Dict[str, torch.Tensor],
+    sparsity: float = 0.0,
     return_outputs=False,
 ) -> typing.Union[torch.Tensor, typing.Dict[str, torch.Tensor]]:
     """
-    this method acts on:
-        - `logits` from a model (this can be softmaxed to get a distribution over the vocabulary elsewhere)
-        - `inputs` is the dictionary of tensors supplied to the model, which includes the key `input_ids`
-            and `answer_locations` which provides a 0-1 mask over which tokens in the sequence should be
-            considered 'predictions' (only these are used for loss computation)
-        - `return_outputs` will cause the method to return the gathered logits, argmax-softmaxed logit answers, and true labels
-            all as a dictionary with the keys `loss`, `gathered_logits`, `gathered_answers`, `gathered_labels`
+    computes the loss for a batch of logits and inputs, limited to:
+    - specific answer locations in the sequence
+    - probabilistically chosen answer locations based on `sparsity`
 
-    Example:
+    Parameters
+    ----------
+    - `logits` from a model (this can be softmaxed to get a distribution over the vocabulary elsewhere)
+    - `inputs` is the dictionary of tensors supplied to the model, which includes the key `input_ids`
+        and `answer_locations` which provides a 0-1 mask over which tokens in the sequence should be
+        considered 'predictions' (only these are used for loss computation)
+    - `return_outputs` will cause the method to return the gathered logits, argmax-softmaxed logit answers, and true labels
+        all as a dictionary with the keys `loss`, `gathered_logits`, `gathered_answers`, `gathered_labels`
+
+    Example
     --------
     ```python
     outputs = compute_masked_loss(logits, inputs, return_outputs=True)
@@ -706,6 +782,14 @@ def compute_masked_loss(
     """
     # logits have the shape (b, seq_len, |V|)
     b, seq_len, vocab_size = logits.shape
+
+    # depending on the sparsity parameter, we want to additionally zero-out some of the answer locations
+    # that are non-zero however, to achieve this, we can simply multiply the entire answer_locations
+    # tensor by a randomly-generated mask, since each item in the mask is iid. for answer locations that
+    # are zero already, nothing will change.
+    sparsity_mask = torch.rand(b, seq_len, device=logits.device).ge(sparsity).int()
+    sparsity_mask.requires_grad = False
+
     # logger.debug(f"{logits.shape = }, {inputs['token_ids'].shape = }")
     gathered_logits = logits[
         :, inputs["answer_locations"][0].nonzero(as_tuple=True)[0] - 1, :
@@ -723,7 +807,7 @@ def compute_masked_loss(
         # NOTE: a simple rearrange is not appropriate here! we need to permute the dimensions.
         # see here for why: https://discuss.pytorch.org/t/for-beginners-do-not-use-view-or-reshape-to-swap-dimensions-of-tensors/75524
         # DONT: einops.rearrange(logits, "b seq_len vocab -> b vocab seq_len"),
-        # DO:
+        # DO:   torch.permute(gathered_logits, (0, 2, 1))
         torch.permute(gathered_logits, (0, 2, 1)),
         gathered_labels,
         reduction="mean",
