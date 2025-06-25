@@ -24,9 +24,31 @@ from workingmem.model import (
 )
 from workingmem.task import SIRDataset, SIRConfig
 
-logging.basicConfig()
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
+)
 logger = logging.getLogger("workingmem")
 logger.setLevel(logging.INFO)
+
+
+def print_gpu_mem(obj: typing.Any = None):
+    """
+    Print the GPU memory usage.
+    """
+    import torch
+
+    if torch.cuda.is_available():
+        logger.info(
+            f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB, "
+            f"reserved: {torch.cuda.memory_reserved() / 1024**3:.2f} GB"
+        )
+        if obj is not None:
+            logger.info(
+                f"GPU memory allocated for {obj.__class__.__name__}: "
+                f"{torch.cuda.memory_allocated(obj) / 1024**3:.2f} GB"
+            )
+    else:
+        logger.info("No GPU available; no memory report.")
 
 
 @dataclasses.dataclass
@@ -34,8 +56,9 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-3"
-    method: str = "bayes"
+    project_name: str = "wm-comp-limit-4"
+    # method: str = "grid"
+    method: str = "bayes"  # grid, random, bayes
     metric: dict = dataclasses.field(
         default_factory=lambda: {"goal": "maximize", "name": "eval_acc"}
     )
@@ -80,6 +103,11 @@ def main(config: MainConfig):
     given a config, train a model on an SIR dataset, evaluate, and test, all described
     as per config. wandb is used for logging regardless of sweep or not.
     """
+    supplied_batch_size = config.trainer.batch_size
+    config.trainer.batch_size = 256
+    logger.warning(
+        f"OVERRIDE {supplied_batch_size=}: starting with {config.trainer.batch_size} to search over the memory limit"
+    )
     logger.info(f"running main with config: {config}")
     wandb.init(
         project=config.wandb.project_name,
@@ -99,6 +127,9 @@ def main(config: MainConfig):
     logger.info("train dataset size: %s", len(train_dataset))
     logger.info("eval dataset size: %s", len(eval_dataset))
     logger.info("test dataset size: %s", len(test_dataset))
+
+    print_gpu_mem(train_dataset)
+    print_gpu_mem(eval_dataset)
 
     # set up the model
     logger.info("initializing model")
@@ -142,19 +173,56 @@ def main(config: MainConfig):
             {"model.from_pretrained": str(config.model.from_pretrained)}
         )
 
-    # once the `from_pretrained` path is set, we can just use the regular way to load the model,
-    # since the `ModelWrapper` class will take care of loading the model from checkpoint
+    # once the `from_pretrained` path is set to a not-None value, we can just use the regular way to
+    # load the model, since the `ModelWrapper` class will take care of loading the model from checkpoint
     model = ModelWrapper(config.model)
 
+    logger.info(
+        f"model initialized with {config.model.n_layers} layers, {config.model.n_heads} heads, "
+        f"{config.model.d_model} d_model, {config.model.d_vocab} d_vocab, "
+        f"from pretrained: {config.model.from_pretrained}"
+    )
+    print_gpu_mem(model)
+
+    logger.info(f"about to start training on: {repr(train_dataset)}")
     if config.dataset.split == "train":
         # train the model
         logger.info("Training the model")
-        model.train(
-            train_dataset,
-            config.trainer,
-            eval_dataset=eval_dataset,
-            test_dataset=test_dataset,
-        )
+
+        while config.trainer.batch_size >= 16:
+            # if the batch size is too large, we won't be able to fit the model in memory
+            # so we will reduce it until it fits
+            try:
+                model.train(
+                    train_dataset,
+                    config.trainer,
+                    eval_dataset=eval_dataset,
+                    test_dataset=test_dataset,
+                )
+                break  # if training succeeded, we can break out of the loop
+            except RuntimeError as e:
+                if "CUDA out of memory. Tried to allocate" in str(e):
+                    logger.info(str(e))
+                    logger.warning(
+                        f"⚠ batch size {config.trainer.batch_size} is too large, reducing it by half to {config.trainer.batch_size // 2} and retrying"
+                    )
+                    config.trainer.batch_size //= 2
+                    # remember to update the wandb config for logging
+                    wandb.config.update(
+                        {"trainer.batch_size": config.trainer.batch_size}
+                    )
+                else:
+                    raise e
+        else:
+            logger.error(
+                f"could not train the model with batch size {config.trainer.batch_size} even after reducing it to 16, exiting"
+            )
+        # model.train(
+        #     train_dataset,
+        #     config.trainer,
+        #     eval_dataset=eval_dataset,
+        #     test_dataset=test_dataset,
+        # )
 
         logger.info("Finished.")
 
@@ -177,48 +245,54 @@ if __name__ == "__main__":
                     ################################
                     "model.from_pretrained": {
                         # "value": "model_checkpoints/evcxg3kc/"  # n_reg 50 exposure task
-                        #
                         # "value": "model_checkpoints/b931g4g8"  # split set false
                         # "value": "model_checkpoints/nxgusfzl"  # split set true
                         "value": None
                     },  # !
                     "model.n_layers": {"value": 2},
-                    "model.n_heads": {"values": [2]},
-                    "model.d_model": {"values": [256]},  # !
+                    "model.n_heads": {"value": 4},
+                    "model.d_model": {"value": 128},  # !
                     "model.d_head": {"value": 128},  # !
-                    # "model.seed": {"values": [42, 43, 44, 45]},
+                    # "model.seed": {"values": [*range(42, 62)]},
+                    "model.seed": {"values": [*map(str, range(42, 62))]},
                     ################################
                     # trainer parameters
                     ################################
                     "trainer.freeze_embeddings": {"value": "False"},  # !
                     # "trainer.freeze_attention": {"value": "False"},  # NOTE: NOT IMPLEMENTED
-                    "trainer.batch_size": {"value": 128},
+                    # "trainer.batch_size": {"value": 16}, # this is now automatically determined
                     "trainer.epochs": {"value": 60},  # !
-                    "trainer.learning_rate": {"value": 1e-3},
-                    # "trainer.learning_rate": {
-                    #     "min": 1e-5,
-                    #     "max": 1,
-                    #     "distribution": "uniform",
-                    # },
-                    "trainer.weight_decay": {"value": 3e-5},
+                    # "trainer.learning_rate": { "min": 1e-6, "max": 1e-1, "distribution": "log_uniform_values", },
+                    "trainer.learning_rate": {"value": 1e-4},
+                    "trainer.weight_decay": {"value": 0.0},
+                    # "trainer.weight_decay": {"value": 3e-5},
                     # "trainer.weight_decay": {
-                    #     "min": 0,
-                    #     "max": 1e-2,
-                    #     "distribution": "uniform",
+                    #     "min": 1e-8,
+                    #     "max": 1e-3,
+                    #     "distribution": "log_uniform_values",
                     # },
                     "trainer.checkpoint_dir": {"value": "model_checkpoints/"},
                     ################################
                     # dataset parameters
                     ################################
                     "dataset.seq_len": {"value": 300},  # !
-                    "dataset.concurrent_reg": {"value": 64},  # !
+                    "dataset.concurrent_reg": {"value": 2},  # !
                     "dataset.n_reg": {"value": 100},  # !
                     "dataset.n_train": {"value": 100_000},  # !
-                    "dataset.concurrent_items": {"values": [4]},  # !
+                    # this was changed from 4 to 128 to accommodate split set control for
+                    # 64 concurrent registers (doing split set control requires at least 2 items
+                    # within each trial sequence that are fixed to a single register)
+                    "dataset.concurrent_items": {"values": [128]},
                     "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
-                    "dataset.n_items": {"value": 50},
+                    "dataset.n_items": {"value": 256},
                     "dataset.global_split_set_control": {"value": "False"},  #!!!
+                    # local split set is supposed to be a version of split set control where the split set
+                    # is determined on a per-trial-sequence basis rather than at the dataset level.
+                    # it's unclear if that should have any effect on the model performance. but incorporating
+                    # this condition will help us understand if the 'concurrent management' we are thinking
+                    # of actually works the way we think it works (at the trial sequence level).
+                    # if local split set works closer to the normal (critical) condition, it doesn't,
                     # "dataset.local_split_set_control": {"value": "False"},  # NOTE: NOT IMPLEMENTED
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
