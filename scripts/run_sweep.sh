@@ -10,7 +10,7 @@
 ##SBATCH -p l40s-gcondo --gres=gpu:1
 ##SBATCH -p cs-superlab-gcondo --gres=gpu:1 --account=cs-superlab-gcondo
 
-#SBATCH -a 1-11%20
+#SBATCH -a 1-1%20
 #SBATCH -t 1-00:00:00
 
 
@@ -103,5 +103,42 @@ echo "find sample run at batch-output/training_run_${SLURM_ARRAY_JOB_ID}_1.out"
 #
 ####
 
+# in this section, we are experimenting with post-training after already having learned a strategy on 100_2 task.
+# we will, however, do all the conditions with the same architecture as 100_2 so that weights can be initialized.
 
-# in this section, we are experimenting with post-training after already having learned a strategy
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/fpwt03ja # concurrent_reg=64
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/vg3ppbzw # concurrent_reg=32
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/jfvyqc4m # concurrent_reg=16
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/8msre3gp # concurrent_reg=08
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/0xe1g0uu # concurrent_reg=04
+
+# below, we will run matched split-set control versions of the task for each of 2,4,8,16,32,64 concurrent_reg
+# with hyperparams prevoiusly found in per-condition hyperparam sweeps
+
+# sleep a random amount of time to avoid all jobs starting at the same time between 1 to 30 seconds---this is so
+# each run has time to query wandb and pick a different seed (though I'd have imagined wandb to take care of this
+# already)
+sleep $((RANDOM % 30 + 1))
+
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/qn4l79ft # concurrent_reg=64
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/lddb039a # concurrent_reg=32
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/1skc9gap # concurrent_reg=16
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/vgoktqah # concurrent_reg=08
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/ur3f03fm # concurrent_reg=04
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-4/tc326x3w # concurrent_reg=02
+
+
+# !!!⚠
+# REDO OF THE best-shot SWEEPS this time with just 4 concurrent items (the 128 concurrent items condition
+# introduces a quasi split-set condition, enabling heuristic solutions unless really pressured to do the task
+# in higher register conditions)
+# this next part is for a 20-grid-search following the random sweeps performed for each condition separately
+#
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-5/ # concurrent_reg=64
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-5/ # concurrent_reg=32
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-5/ # concurrent_reg=16
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-5/ # concurrent_reg=8
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-5/ # concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-5/ # concurrent_reg=2
+#
+####

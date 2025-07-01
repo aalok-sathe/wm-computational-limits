@@ -88,7 +88,7 @@ class TrainingConfig:
 
     logging_strategy: str = "epoch"  # log every X epochs or X steps?
     logging_steps: int = 1  # log every X epochs/steps
-    log_predictions: typing.Union[bool, None] = True
+    log_predictions: typing.Union[bool, None] = None
 
     # log X many times per epoch: the # of steps to log after is determined
     # by the dataset length and batch size
@@ -248,7 +248,7 @@ class ModelWrapper(ABC):
             center_unembed=True,  # this shifts the unembedding matrix weights to be centered around 0
             center_writing_weights=True,  # this shifts the weights written to residual stream to be centered around 0
             fold_ln=False,
-            refactor_factored_attn_matrices=True,
+            # refactor_factored_attn_matrices=True,
         )
         logger.info(f"finished loading model state dict from {_state_dict_path}")
 
@@ -353,7 +353,7 @@ class ModelWrapper(ABC):
         train_dataloader = DataLoader(
             dataset,
             batch_size=training_config.batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=1,
             pin_memory=True,
         )
