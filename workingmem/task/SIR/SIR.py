@@ -294,14 +294,23 @@ class SIRDataset(GeneratedCachedDataset):
         # typically, we'll be using split-set control when n_reg = 2 and
         # concurrent_reg = 2. then, we'll do a very simple serial mapping of
         # item ranges to each register.
+        # NOTE: UPDATE: we want to now start using split-set control with different
+        # numbers of concurrent registers, so we need to expand this hunk to be
+        # more general
         if self.config.global_split_set_control:
             item_range = np.arange(self.config.n_items - self.config.heldout_items)
             # split the item_range up roughly equally into `concurrent_regs` parts
             # and assign each part to a register
             items_per_reg = (item_range[-1] + 1) // self.config.concurrent_reg
-            # it isn't the best idea to repeat per trial, but it should be deterministic
-            # and also shouldn't be too costly
+            # it isn't the best idea to repeat this splitting up process
+            # per trial, but as long as it's deterministic and not too costly
+            # it should be OK
+            # `how_many` is the number of items used with each register per trial sequence.
+            # e.g., for 64 registers and 128 items, `how_many` will be 2, and 2 registers
+            # will be sampled from a larger pool of 4 registers (out of 256) that always occur
+            # with this register
             how_many = self.config.concurrent_items // self.config.concurrent_reg
+            # within each trial sequence, we must have the same number of concurrent items
             assert (
                 how_many * self.config.concurrent_reg == self.config.concurrent_items
             ), (
@@ -309,15 +318,21 @@ class SIRDataset(GeneratedCachedDataset):
                 f"wrong and it doesn't add up to the {self.config.concurrent_items=}"
             )
 
+            # for every register, we assign `items_per_reg` items from the item pool
+            # to the register, so that we can sample from it later
             for i in range(self.config.concurrent_reg):
                 this_reg_item_range = item_range[
                     i * items_per_reg : (i + 1) * items_per_reg
                 ]
+                # this statement is where we sample `how_many` items from the pool of
+                # `items_per_reg` items (`this_reg_item_range`) for this register
                 register_item_pool[regs_chosen[i]] = np.random.choice(
                     this_reg_item_range, how_many, replace=False
                 )
 
-            # make sure each register has at least two items associated with it
+            # make sure each register has at least two items associated with it for this trial
+            # sequence; otherwise the task doesn't make sense (and we wouldn't be able to generate
+            # 'diff' labeled trials)
             assert all(len(v) >= 2 for v in register_item_pool.values()), (
                 f"register_item_pool doesn't have at least two items "
                 f"associated with each register: {register_item_pool}"
