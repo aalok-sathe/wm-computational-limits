@@ -1,5 +1,5 @@
 """
-run as: python -m workingmem
+run as: `python -m workingmem`
 """
 
 #!/usr/bin/env python3
@@ -23,32 +23,13 @@ from workingmem.model import (
     TrainingConfig,
 )
 from workingmem.task import SIRDataset, SIRConfig
+from workingmem.utils import print_gpu_mem
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
 )
 logger = logging.getLogger("workingmem")
 logger.setLevel(logging.INFO)
-
-
-def print_gpu_mem(obj: typing.Any = None):
-    """
-    Print the GPU memory usage.
-    """
-    import torch
-
-    if torch.cuda.is_available():
-        logger.info(
-            f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB, "
-            f"reserved: {torch.cuda.memory_reserved() / 1024**3:.2f} GB"
-        )
-        if obj is not None:
-            logger.info(
-                f"GPU memory allocated for {obj.__class__.__name__}: "
-                f"{torch.cuda.memory_allocated(obj) / 1024**3:.2f} GB"
-            )
-    else:
-        logger.info("No GPU available; no memory report.")
 
 
 @dataclasses.dataclass
@@ -166,11 +147,22 @@ def main(config: MainConfig):
                 f"filtering models by accuracy >= .99 in {models_dir}. {prev_len = }, {len(models_dir) = }"
             )
 
-        # set `from_pretrained` path to the Xth model NOTE randomly for now:(
-        config.model.from_pretrained = str(random.choice(models_dir))
+        # set `from_pretrained` path to one of the pretrained models after filtering for its end accuracy.
+        # if a seed is provided, we actually use the seed as a modulo rotary operator to pick the Xth index.
+        # if no seed is provided, we randomly pick from the list of models.
+        if config.model.seed is not None:
+            logger.info(
+                f"{config.model.seed = }. picking {config.model.seed % len(models_dir)}th model from {len(models_dir)} models"
+            )
+            config.model.from_pretrained = str(
+                models_dir[config.model.seed % len(models_dir)]
+            )
+        else:
+            config.model.from_pretrained = str(random.choice(models_dir))
         # record the new pretrained model path corresponding to the model we're actually using
         wandb.config.update(
-            {"model.from_pretrained": str(config.model.from_pretrained)}
+            {"model.from_pretrained": str(config.model.from_pretrained)},
+            allow_val_change=True,
         )
 
     # once the `from_pretrained` path is set to a not-None value, we can just use the regular way to
@@ -209,7 +201,8 @@ def main(config: MainConfig):
                     config.trainer.batch_size //= 2
                     # remember to update the wandb config for logging
                     wandb.config.update(
-                        {"trainer.batch_size": config.trainer.batch_size}
+                        {"trainer.batch_size": config.trainer.batch_size},
+                        allow_val_change=True,
                     )
                 else:
                     raise e
@@ -247,14 +240,19 @@ if __name__ == "__main__":
                         # "value": "model_checkpoints/evcxg3kc/"  # n_reg 50 exposure task
                         # "value": "model_checkpoints/b931g4g8"  # split set false
                         # "value": "model_checkpoints/nxgusfzl"  # split set true
+                        # "value": "model_checkpoints/qc820c8e"  # 100_2 task, 256 item, 128 concurrent
                         "value": None
                     },  # !
                     "model.n_layers": {"value": 2},
                     "model.n_heads": {"value": 4},
                     "model.d_model": {"value": 128},  # !
                     "model.d_head": {"value": 128},  # !
-                    # "model.seed": {"values": [*range(42, 62)]},
-                    "model.seed": {"values": [*map(str, range(42, 62))]},
+                    "model.seed": {
+                        "values": [*map(str, range(62, 82))]
+                    },  # 20 random seeds; discretized using str(); use this distinct range for hparam sweep
+                    # "model.seed": {
+                    #     "values": [*map(str, range(42, 42 + 15))]
+                    # },  # 15 random seeds
                     ################################
                     # trainer parameters
                     ################################
@@ -282,11 +280,14 @@ if __name__ == "__main__":
                     # this was changed from 4 to 128 to accommodate split set control for
                     # 64 concurrent registers (doing split set control requires at least 2 items
                     # within each trial sequence that are fixed to a single register)
-                    "dataset.concurrent_items": {"values": [128]},
+                    "dataset.concurrent_items": {"value": 4},
                     "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
-                    "dataset.n_items": {"value": 256},
-                    "dataset.global_split_set_control": {"value": "False"},  #!!!
+                    "dataset.n_items": {"value": 50},
+                    "dataset.global_split_set_control": {
+                        "value": "False",
+                        # "value": "True",
+                    },  #!!!
                     # local split set is supposed to be a version of split set control where the split set
                     # is determined on a per-trial-sequence basis rather than at the dataset level.
                     # it's unclear if that should have any effect on the model performance. but incorporating
