@@ -31,3 +31,6 @@ dev = [
 
 [tool.setuptools]
 packages = ['workingmem']
+
+[tool.ruff]
+# line-length = 90
