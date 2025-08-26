@@ -43,7 +43,8 @@ class ModelConfig:
     n_layers: int = 2
     n_heads: int = 2
     n_ctx: int = 1205  # this should be set so that it is longer than the longest trial sequence length we expect to use with the model. i.e., 4 * seq_len + change. for 300, we need at least 1201.
-    d_model: int = 128  # dimensionality of the residual stream and embeddings
+    d_model: int = 256  # dimensionality of the residual stream and embeddings
+    d_head: int = 128
     d_mlp: int = 0
     # act_fn: str = "relu"  # from HookedTransformerConfig: "must be set unless using an attn-only model."
     d_vocab: int = None  # vocab dim is determined by the tokenizer
@@ -54,15 +55,16 @@ class ModelConfig:
     positional_embedding_type: str = (
         "rotary"  # type of positional embedding to use, e.g. "rotary", "standard",
     )
-    d_head: int = 128
 
+    ################################################
+    # DEPRECATED: to remove this chunk at some point
     # NOTE: EDIT 2025-06-05: we set the head dim to be the same as the model dimensionality irrespective of the number of heads.
     # so, the number of parameters will grow faster now
     # @property
     # def d_head(self) -> int:
     #     """calculate the dimensionality of the attention heads in the model as per `d_model` and `n_heads`"""
     #     return self.d_model
-
+    #
     #     d_head = self.d_model // self.n_heads
     #     if d_head * self.n_heads == self.d_model:
     #         return d_head
@@ -70,6 +72,7 @@ class ModelConfig:
     #         f"the model dimensionality {self.d_model} is not divisible by the number of heads "
     #         f"{self.n_heads} leading to an incompatible head dimensionality {d_head}"
     #     )
+    ################################################
 
 
 @dataclasses.dataclass
@@ -77,14 +80,17 @@ class TrainingConfig:
     freeze_embeddings: bool = None
     epochs: int = 60
     optimizer: str = "adamw"
-    learning_rate: float = 1e-4
+    learning_rate: float = 4e-4
     weight_decay: float = 0.0
+    sparsity: float = 0.0
+
     # this is where checkpoints are saved, if supplied.
     # if available, a wandb.run.sweep_id AND a model random seed will be appended
     # to the checkpoint directory name.
     # e.g. `model_checkpoints/{sweep_id}/{run_name}/`
     checkpoint_dir: typing.Union[str, None] = "model_checkpoints/"
-    batch_size: int = 256
+    batch_size: int = 128
+    seed: int = None
 
     logging_strategy: str = "epoch"  # log every X epochs or X steps?
     logging_steps: int = 1  # log every X epochs/steps
@@ -99,7 +105,9 @@ class TrainingConfig:
     # if strategy is 'epoch', then we save every X epochs determined by `save_steps`
     save_steps: int = None
 
-    do_test: bool = True
+    do_test: bool = True  # evaluate the model on the test set after training?
+
+    mask_answer_tokens: bool = None  # whether we train the model using answer tokens in the input sequence or not
 
 
 @dataclasses.dataclass
@@ -116,6 +124,7 @@ class TrainingHistoryEntry:
     # training args
     epoch: int  # remember to update this (this is the epochs trained so far)
     batch_size: int
+    sparsity: float
     learning_rate: float
     weight_decay: float
     sweep_id: str
@@ -148,7 +157,7 @@ class ModelWrapper(ABC):
             logger.info(f"initializing model from scratch with config: {config}")
             # set the seed for initializing the model weights
             if config.seed is not None:
-                logger.info(f"setting random seed to {config.seed}")
+                logger.info(f"setting MODEL random seed to {config.seed}")
                 torch.manual_seed(int(config.seed))
                 np.random.seed(int(config.seed))
 
@@ -338,6 +347,7 @@ class ModelWrapper(ABC):
                 dataset_path=str(dataset.config.basedir),
                 batch_size=training_config.batch_size,
                 learning_rate=training_config.learning_rate,
+                sparsity=training_config.sparsity,
                 weight_decay=training_config.weight_decay,
                 freeze_embeddings=training_config.freeze_embeddings,
                 sweep_id=(wandb.run.sweep_id if wandb.run else None),
@@ -445,7 +455,11 @@ class ModelWrapper(ABC):
                     with torch.amp.autocast(
                         device_type="cuda" if torch.cuda.is_available() else "cpu"
                     ):
-                        loss = self._step(inputs)
+                        loss = self._step(
+                            inputs,
+                            sparsity=training_config.sparsity,
+                            mask_answer_tokens=training_config.mask_answer_tokens,
+                        )
 
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -481,6 +495,7 @@ class ModelWrapper(ABC):
                         # the end of each epoch
                         train_epoch=None,
                         predictions_table=None,
+                        mask_answer_tokens=training_config.mask_answer_tokens,
                     )
                     eval_loss, eval_acc, eval_macro_acc = (
                         eval_result["loss"],
@@ -517,6 +532,7 @@ class ModelWrapper(ABC):
                     # passing the predictions table to the eval loop for
                     # logging predictions and heatmaps over logits
                     predictions_table=predictions_table,
+                    mask_answer_tokens=training_config.mask_answer_tokens,
                 )
                 eval_loss, eval_acc, eval_macro_acc = (
                     eval_result["loss"],
@@ -588,7 +604,11 @@ class ModelWrapper(ABC):
                     "test_labels",
                 ]
             )
-            test_result = self.test(test_dataset, test_table)
+            test_result = self.test(
+                test_dataset,
+                test_table,
+                mask_answer_tokens=training_config.mask_answer_tokens,
+            )
             test_loss, test_acc, test_macro_acc = (
                 test_result["loss"],
                 test_result["acc"],
@@ -609,11 +629,16 @@ class ModelWrapper(ABC):
         self,
         dataset: GeneratedCachedDataset,
         test_predictions_table: wandb.Table = None,
+        mask_answer_tokens: bool = True,
     ):
         """
         evaluates the model on the test set
         """
-        return self.evaluate(dataset, predictions_table=test_predictions_table)
+        return self.evaluate(
+            dataset,
+            predictions_table=test_predictions_table,
+            mask_answer_tokens=mask_answer_tokens,
+        )
 
     def evaluate(
         self,
@@ -621,6 +646,8 @@ class ModelWrapper(ABC):
         train_epoch: int = None,
         predictions_table: wandb.Table = None,
         batch_size: int = 128,
+        return_predictions: bool = False,
+        mask_answer_tokens=True,
     ) -> typing.Tuple[float, float]:
         """
         Returns the average loss and accuracy of the model on the dataset (assumed eval or test split)
@@ -632,7 +659,6 @@ class ModelWrapper(ABC):
         train_epoch: `int` (optional)
             the epoch number of the training run that made a call to the evaluation run
         """
-        import einops
 
         logger.info("evaluating model")
         self.model.eval()
@@ -648,6 +674,7 @@ class ModelWrapper(ABC):
         losses = []
         predictions = []
         actual_labels = []
+        input_sequences = []
 
         with torch.no_grad():
             for eval_step, inputs in enumerate(eval_dataloader):
@@ -656,7 +683,10 @@ class ModelWrapper(ABC):
                     device_type="cuda" if torch.cuda.is_available() else "cpu"
                 ):
                     loss, answer_logits, answers, labels = self._step(
-                        inputs, return_outputs=True
+                        inputs,
+                        sparsity=0.0,
+                        return_outputs=True,
+                        mask_answer_tokens=mask_answer_tokens,
                     )
                 # we have a single loss value per batch (this is a fine approximation)
                 losses += [loss.item()]
@@ -678,6 +708,9 @@ class ModelWrapper(ABC):
                                 labels[example_ix].detach().cpu().tolist()
                             ),
                         )
+                if return_predictions:
+                    for example_ix in range(len(inputs["tokens"])):
+                        input_sequences += [inputs["tokens"][example_ix]]
 
         # now `predictions` is of shape (N_batches, batch_size, seq_len)
         # we want it to be of shape (N_batches * batch_size, seq_len)
@@ -696,6 +729,16 @@ class ModelWrapper(ABC):
         logger.info(f"percent trials correct: {acc:.5f}")
         logger.info(f"# sequences correct: {eval_num_correct} / {len(actual_labels)}")
 
+        if return_predictions:
+            return {
+                "loss": np.mean(losses),
+                "acc": acc,
+                "macro_acc": eval_num_correct / len(actual_labels),
+                "predictions": predictions,
+                "actual_labels": actual_labels,
+                "input_sequences": input_sequences,
+            }
+
         return {
             "loss": np.mean(losses),
             "acc": acc,
@@ -703,7 +746,11 @@ class ModelWrapper(ABC):
         }
 
     def _step(
-        self, inputs: typing.Dict[str, torch.Tensor], return_outputs=False
+        self,
+        inputs: typing.Dict[str, torch.Tensor],
+        sparsity: float = 0.0,
+        return_outputs=False,
+        mask_answer_tokens=True,
     ) -> typing.Union[
         torch.Tensor,
         typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
@@ -713,20 +760,35 @@ class ModelWrapper(ABC):
         batch of a batch of inputs
         """
 
-        inputs["answer_locations"] = inputs["answer_locations"].to(self.device)
         inputs["token_ids"] = inputs["token_ids"].to(self.device)
+        inputs["answer_locations"] = inputs["answer_locations"].to(self.device)
+        inputs["answer_locations"].requires_grad = False  # not backprop-able
+
+        # a variation we can do here is to remove the actual answer tokens from the inputs
+        # so this is less like a language modeling task and more like a classification task
+        # (which it already is in principle due to not receiving loss on anything but the
+        # answers). however, this way, it should take away the answers implicit in the input
+        # text
+        inputs["answers"] = inputs["token_ids"] * inputs["answer_locations"].to(
+            self.device
+        )  # only the relevant token_ids remain non-zeroed-out as `answers`
+
+        if mask_answer_tokens:
+            logger.debug(
+                f"removing answer tokens from input: {inputs['token_ids'].gt(0).sum() = }"
+            )
+            inputs["token_ids"] = inputs["token_ids"] * (1 - inputs["answer_locations"])
+            logger.debug(
+                f"\tAFTER removing answer tokens from input: {inputs['token_ids'].gt(0).sum() = }"
+            )
 
         # shape of logits: (b, seq_len, |V|)
         logits = self.model(inputs["token_ids"])
 
         if return_outputs:
-            # answers is of the shape (b, seq_len), and we are only going to use
-            # what's produced at `answer_locations` to compute accuracy
-            # (but it may be interesting to look at what the model is producing at each
-            # timestep anyway---there is absolutely no pressure for the model to produce
-            # anything in particular at the locations that are not answer locations, so
-            # I wonder)
-            outputs = compute_masked_loss(logits, inputs, return_outputs=return_outputs)
+            outputs = compute_masked_loss(
+                logits, inputs, sparsity=sparsity, return_outputs=return_outputs
+            )
             loss, gathered_logits, gathered_answers, gathered_labels = (
                 outputs["loss"],
                 outputs["gathered_logits"],
@@ -744,7 +806,9 @@ class ModelWrapper(ABC):
 
             return loss, gathered_logits, gathered_answers, gathered_labels
         else:
-            loss = compute_masked_loss(logits, inputs, return_outputs=return_outputs)
+            loss = compute_masked_loss(
+                logits, inputs, sparsity=sparsity, return_outputs=return_outputs
+            )
             return loss
 
 
@@ -752,7 +816,9 @@ def compute_masked_loss(
     logits: torch.Tensor,
     inputs: typing.Dict[str, torch.Tensor],
     sparsity: float = 0.0,
-    return_outputs=False,
+    # rescale_loss: bool = True,
+    rescale_loss: bool = False,
+    return_outputs: bool = False,
 ) -> typing.Union[torch.Tensor, typing.Dict[str, torch.Tensor]]:
     """
     computes the loss for a batch of logits and inputs, limited to:
@@ -765,6 +831,9 @@ def compute_masked_loss(
     - `inputs` is the dictionary of tensors supplied to the model, which includes the key `input_ids`
         and `answer_locations` which provides a 0-1 mask over which tokens in the sequence should be
         considered 'predictions' (only these are used for loss computation)
+    - `sparsity` acts as an iid probability at each answer location to mask out the answer---this way, the model receives
+       no loss at this location.
+        Q: should we also mask the input answer immediately following the answer location?
     - `return_outputs` will cause the method to return the gathered logits, argmax-softmaxed logit answers, and true labels
         all as a dictionary with the keys `loss`, `gathered_logits`, `gathered_answers`, `gathered_labels`
 
@@ -783,26 +852,36 @@ def compute_masked_loss(
     # logits have the shape (b, seq_len, |V|)
     b, seq_len, vocab_size = logits.shape
 
-    # depending on the sparsity parameter, we want to additionally zero-out some of the answer locations
-    # that are non-zero however, to achieve this, we can simply multiply the entire answer_locations
-    # tensor by a randomly-generated mask, since each item in the mask is iid. for answer locations that
-    # are zero already, nothing will change.
-    sparsity_mask = torch.rand(b, seq_len, device=logits.device).ge(sparsity).int()
-    sparsity_mask.requires_grad = False
-
     # logger.debug(f"{logits.shape = }, {inputs['token_ids'].shape = }")
     gathered_logits = logits[
         :, inputs["answer_locations"][0].nonzero(as_tuple=True)[0] - 1, :
     ]
-    gathered_labels = inputs["token_ids"][
+    gathered_labels = inputs["answers"][
         :, inputs["answer_locations"][0].nonzero(as_tuple=True)[0]
     ]
 
+    # depending on the sparsity parameter, we want to additionally zero-out some of the answer locations
+    # that are non-zero however, to achieve this, we can simply multiply the entire answer_locations
+    # tensor by a randomly-generated mask, since each item in the mask is iid. for answer locations that
+    # are zero already, nothing will change.
+    if sparsity > 0.9:
+        logger.warning(f"{sparsity = :.2f} is high")
+        if sparsity >= 0.99:
+            raise ValueError(
+                f"{sparsity = } is too high. sparsity=1 corresponds to no feedback"
+            )
+
+    sparsity_mask = (
+        torch.rand(b, gathered_labels.shape[1], device=logits.device).ge(sparsity).int()
+    )
+    sparsity_mask.requires_grad = False
+
     logger.debug(
-        f"in COMPUTE_MASKED_LOSS: {gathered_logits.shape = }, {gathered_labels.shape = }"
+        f"in COMPUTE_MASKED_LOSS: {gathered_logits.shape = }, {gathered_labels.shape = }, {sparsity_mask.shape = }"
     )
     # logger.debug(gathered_answers)
 
+    # return shape: (b, seq_len)
     loss = torch.nn.functional.cross_entropy(
         # NOTE: a simple rearrange is not appropriate here! we need to permute the dimensions.
         # see here for why: https://discuss.pytorch.org/t/for-beginners-do-not-use-view-or-reshape-to-swap-dimensions-of-tensors/75524
@@ -810,8 +889,27 @@ def compute_masked_loss(
         # DO:   torch.permute(gathered_logits, (0, 2, 1))
         torch.permute(gathered_logits, (0, 2, 1)),
         gathered_labels,
-        reduction="mean",
+        reduction="none",
     )
+
+    logger.debug(f"{loss.shape = } {loss.greater(0).sum() = }. applying mask")
+    # apply sparsity mask to the loss to zero-out the loss at the locations dropped by sparsity computation
+    # this is done by multiplying the loss by the sparsity mask, which is 1
+    # at the locations we want to keep and 0 at the locations we want to drop
+    old_loss = loss.mean()  # / gathered_labels.shape[0]  # average over the batch size
+    loss = loss * sparsity_mask
+    logger.debug(
+        f"\tAFTER {loss.shape = } {loss.greater(0).sum() = }. AFTER applying mask"
+    )
+    loss = loss.mean()  # / gathered_labels.shape[0]  # average over the batch size
+    logger.debug(
+        f"old loss: {old_loss.item():.3f}, new loss after applying sparsity: {loss.item()}"
+    )
+    # at this point, our loss magnitude is smaller (rescaled by `sparsity` compared to the original loss)
+    # if we want it to be comparable, we can rescale it back up by 1 / (1 - sparsity)
+    if rescale_loss:
+        loss /= 1 - sparsity
+        logger.debug(f"new loss after rescaling: {loss.item()}")
 
     if return_outputs:
         return dict(
