@@ -10,6 +10,7 @@ import logging
 import random
 from pathlib import Path
 from collections import defaultdict
+import os
 
 # 3rd party packages
 import tyro
@@ -29,7 +30,8 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
 )
 logger = logging.getLogger("workingmem")
-logger.setLevel(logging.INFO)
+LOGLEVEL = os.environ.get("LOGLEVEL", "INFO").upper()
+logger.setLevel(LOGLEVEL)
 
 
 @dataclasses.dataclass
@@ -37,9 +39,9 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-4"
-    # method: str = "grid"
-    method: str = "bayes"  # grid, random, bayes
+    project_name: str = "wm-comp-limit-7"
+    # method: str = "bayes"  # use this for a hparam sweep
+    method: str = "grid"  # use this once hparams are fixed
     metric: dict = dataclasses.field(
         default_factory=lambda: {"goal": "maximize", "name": "eval_acc"}
     )
@@ -58,7 +60,6 @@ class MainConfig:
     trainer: TrainingConfig
     wandb: WandbConfig
     seed = None
-    # for array jobs, the task id is useful to, e.g., resume from the Xth pretrained model
     array_task_id: typing.Union[int, None] = None
     filter_by_accuracy: bool = None
 
@@ -66,7 +67,7 @@ class MainConfig:
         logger.info(f"running post-init hook to set seeds to {self.seed}")
         if self.seed is not None:
             # prefer to keep using the same dataset instance across model training seeds
-            # unless the dataset seet is explicitly set, so we wont be setting
+            # unless the dataset seed is explicitly set, so we wont be setting
             # `self.dataset.seed` here.
             self.model.seed = self.seed
             self.trainer.seed = self.seed
@@ -176,6 +177,17 @@ def main(config: MainConfig):
     )
     print_gpu_mem(model)
 
+    # NOTE!
+    new_epochs = int(config.trainer.epochs / (1 - config.trainer.sparsity))
+    # adjust epochs for sparsity
+    logger.info(
+        f"adjusting epochs for sparsity: {config.trainer.epochs} -> {new_epochs}"
+    )
+    config.trainer.epochs = new_epochs
+    wandb.config.update(
+        {"trainer.epochs": config.trainer.epochs}, allow_val_change=True
+    )
+
     logger.info(f"about to start training on: {repr(train_dataset)}")
     if config.dataset.split == "train":
         # train the model
@@ -226,13 +238,66 @@ if __name__ == "__main__":
     # case 1 is we create a new sweep
     if config.wandb.create_sweep:
         sweep_config = dataclasses.asdict(config.wandb)
+
+        ############
+        # parameters to use when we want to optimize hyperparameters before fixing them for experimentation
+        ############
+        hparam_optimization_params = {
+            "model.n_heads": {"values": [2, 4, 6]},
+            "model.d_model": {"values": [64, 128, 256, 512]},
+            "model.d_head": {"values": [64, 128, 256, 512]},
+            # we use a smaller range of seeds just to make sure out hparams aren't overly seed-specific.
+            "model.seed": {"values": [*map(str, range(62, 67))]},
+            "trainer.learning_rate": {
+                "min": 1e-6,
+                "max": 1e-2,
+                "distribution": "log_uniform_values",
+            },
+        }
+        ############
+        # parameters to use when we want to run a grid search over a fixed set of hyperparameters
+        # NOTE: change these based on the outcomes of the hparam optimization sweep above!
+        ############
+        fixed_experimental_params = {
+            "model.n_heads": {"value": 6},
+            "model.d_model": {"value": 256},
+            "model.d_head": {"value": 128},
+            "model.seed": {
+                "values": [*map(str, range(42, 42 + 15))]
+            },  # 15 random seeds; non-overlapping range with the seeds used for hparam sweep above
+            "trainer.learning_rate": {"value": 1e-4},
+        }
+        ############
+
+        which_params_to_use = (
+            hparam_optimization_params
+            if config.wandb.method == "bayes"
+            else fixed_experimental_params
+        )
+
         sweep_config.update(
             {
                 "parameters": {
+                    **which_params_to_use,  # use either hparam optimization or fixed params
                     ################################
-                    # global experiment parameters
+                    # generally often-changing params
+                    # NOTE don't forget to change 'bayes' to 'grid' following initial hparam sweep
                     ################################
-                    # "filter_by_accuracy": {"value": "True"},
+                    # sparsity of feedback (loss) over training
+                    "trainer.sparsity": {"value": 0.4},  # !!!!! change!
+                    "dataset.concurrent_reg": {"value": 8},
+                    "dataset.global_split_set_control": {
+                        "value": "False",
+                        # "value": "True",
+                    },  #!!!
+                    ################################
+                    #                              #
+                    #                              #
+                    #                              #
+                    ################################################################
+                    # global experiment parameters that are generally fixed
+                    ################################################################
+                    #
                     ################################
                     # model parameters
                     ################################
@@ -243,51 +308,33 @@ if __name__ == "__main__":
                         # "value": "model_checkpoints/qc820c8e"  # 100_2 task, 256 item, 128 concurrent
                         "value": None
                     },  # !
+                    # "filter_by_accuracy": {"value": "True"}, # only relevant when `from_pretrained` is provided
                     "model.n_layers": {"value": 2},
-                    "model.n_heads": {"value": 4},
-                    "model.d_model": {"value": 128},  # !
-                    "model.d_head": {"value": 128},  # !
-                    "model.seed": {
-                        "values": [*map(str, range(62, 82))]
-                    },  # 20 random seeds; discretized using str(); use this distinct range for hparam sweep
-                    # "model.seed": {
-                    #     "values": [*map(str, range(42, 42 + 15))]
-                    # },  # 15 random seeds
                     ################################
                     # trainer parameters
                     ################################
-                    "trainer.freeze_embeddings": {"value": "False"},  # !
+                    "trainer.mask_answer_tokens": {"value": "True"},
+                    "trainer.freeze_embeddings": {"value": "False"},
                     # "trainer.freeze_attention": {"value": "False"},  # NOTE: NOT IMPLEMENTED
-                    # "trainer.batch_size": {"value": 16}, # this is now automatically determined
-                    "trainer.epochs": {"value": 60},  # !
-                    # "trainer.learning_rate": { "min": 1e-6, "max": 1e-1, "distribution": "log_uniform_values", },
-                    "trainer.learning_rate": {"value": 1e-4},
+                    # "trainer.batch_size": {"value": 16}, # now this is automatically determined so we don't parameterize it
+                    "trainer.epochs": {"value": 60},
                     "trainer.weight_decay": {"value": 0.0},
-                    # "trainer.weight_decay": {"value": 3e-5},
-                    # "trainer.weight_decay": {
-                    #     "min": 1e-8,
-                    #     "max": 1e-3,
-                    #     "distribution": "log_uniform_values",
-                    # },
                     "trainer.checkpoint_dir": {"value": "model_checkpoints/"},
                     ################################
                     # dataset parameters
                     ################################
-                    "dataset.seq_len": {"value": 300},  # !
-                    "dataset.concurrent_reg": {"value": 2},  # !
-                    "dataset.n_reg": {"value": 100},  # !
-                    "dataset.n_train": {"value": 100_000},  # !
+                    "dataset.seq_len": {"value": 300},
+                    "dataset.n_reg": {"value": 100},
+                    "dataset.n_train": {"value": 100_000},
                     # this was changed from 4 to 128 to accommodate split set control for
                     # 64 concurrent registers (doing split set control requires at least 2 items
-                    # within each trial sequence that are fixed to a single register)
+                    # within each trial sequence that are fixed to a single register). but then, we
+                    # observed an increased propensity of networks to engage in heuristic solutions
+                    #
                     "dataset.concurrent_items": {"value": 4},
                     "dataset.n_val": {"value": 1_000},
                     "dataset.n_test": {"value": 1_000},
                     "dataset.n_items": {"value": 50},
-                    "dataset.global_split_set_control": {
-                        "value": "False",
-                        # "value": "True",
-                    },  #!!!
                     # local split set is supposed to be a version of split set control where the split set
                     # is determined on a per-trial-sequence basis rather than at the dataset level.
                     # it's unclear if that should have any effect on the model performance. but incorporating
