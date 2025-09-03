@@ -66,6 +66,8 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         rootdir = Path(self.config.rootdir).expanduser().resolve()
         self.config.basedir = rootdir / str(self)
 
+        self._heldout_setup()
+
         train_path = self.config.basedir / "train.json"
         eval_path = self.config.basedir / "val.json"
         test_path = self.config.basedir / "test.json"
@@ -79,7 +81,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         else:
             if self.config.basedir.exists():
                 # since the directory exists, another process is likely generating the dataset, so
-                # we will block execution for 5 minutes for it to finish
+                # we will block execution for 10 minutes for it to finish
                 import time
 
                 logger.info(
@@ -92,36 +94,40 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                             f"waiting {seconds_waiting / 60} min for {train_path} to be generated"
                         )
                     seconds_waiting += 1
-                    if seconds_waiting > 15 * 60:
+                    if seconds_waiting > 10 * 60:
                         # timeout
-                        logger.error(
+                        logger.warning(
                             f"timed out waiting {seconds_waiting / 60} min for {train_path} to be generated"
                         )
+                        break
                     time.sleep(1)
+
                 logger.info(
                     f"found {train_path} after waiting for {seconds_waiting} seconds"
                 )
                 self._load_split()
+                return
 
-            else:
+            if self.config.generate:
                 self.config.basedir.mkdir(parents=True, exist_ok=True)
-                if self.config.generate:
-                    data = self.generate()
-                    self._to_disk(data)
+                data = self.generate()
+                self._to_disk(data)
 
-                    if self.config.load:
-                        self.data = data
-                        self._load_split()  # change this with self.data = data to trivially save some time
-                else:
-                    logger.info(
-                        f"no data found at {self.config.basedir}, and `generate` is set to False. "
-                        "please set `generate=True` to generate and save the dataset or make"
-                        "calls to `generate_trial_sequence()` for individual trial sequences"
-                    )
+                if self.config.load:
+                    self.data = data
+                    # need to call _load_split so the correct split is loaded
+                    # this method now includes a check to see if data is already loaded
+                    self._load_split()
+            else:
+                logger.info(
+                    f"no data found at {self.config.basedir}, and `generate` is set to False. "
+                    "please set `generate=True` to generate and save the dataset or make"
+                    "calls to `generate_trial_sequence()` for individual trial sequences"
+                )
 
     def _load_split(self):
         """
-        loads the split from disk
+        loads the split from disk if not already loaded
         """
         # if self.data is already loaded, we don't need to load it again
         if hasattr(self, "data") and len(self.data) == getattr(
@@ -138,11 +144,9 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             f"Mismatch in # of examples in {self.config.split} on disk at {split_path} ({len(self.data)}) and config value {getattr(self.config, 'n_' + self.config.split)}"
         )
 
-    def _to_disk(self, data: typing.Collection):
+    def _to_disk(self, data: typing.Dict[str, typing.Collection]):
         """
         writes the generated data to disk in three splits: train, val, test.
-        uses n_{split} to determine the number of examples to write to disk.
-        validates that we have enough examples of each split to write to disk.
         """
 
         attr_str, H = self._attr_str_hash()
@@ -160,30 +164,20 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             # yaml.dump(self._metadata(), k, Dumper=yaml.SafeDumper)
             k.write("\n")
 
-        total_examples = sum(
-            getattr(self.config, f"n_{split}") for split in ["train", "val", "test"]
-        )
-        if len(data) != total_examples:
-            raise ValueError(
-                f"expected {total_examples} examples, got {len(data)} instead"
+        for split in ("train", "val", "test"):
+            gen = len(data[split])
+            req = getattr(self.config, f"n_{split}")
+            assert gen == req, (
+                f"mismatched examples requested ({req}) & generated ({gen}) for {split}"
             )
-
-        cutoffs = [
-            getattr(self.config, f"n_{split}") for split in ["train", "val", "test"]
-        ]
-        cutoffs = np.cumsum(cutoffs)[:-1]
-        # logger.info(f"splitting data into {cutoffs} splits")
-        splits = np.split(data, cutoffs)
-
-        for split, data in zip(["train", "val", "test"], splits):
             logger.info(
-                f"writing {len(data)} examples to {split} at {self.config.basedir}"
+                f"writing {len(data[split])} trials to {self.config.basedir}/{split}"
             )
             split_path = self.config.basedir / f"{split}.json"
             with split_path.open("w") as f:
                 # with gzip.open(split_path, "wt", encoding="utf-8") as f:
                 # yaml.dump(data.tolist(), f, Dumper=yaml.SafeDumper, width=float("inf"))
-                json.dump(data.tolist(), f)
+                json.dump(data[split], f)
 
     def __len__(self):
         assert getattr(self.config, f"n_{self.config.split}") == len(self.data), (
@@ -254,6 +248,14 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             yield self[idx]
 
     @abstractmethod
+    def _heldout_setup(self):
+        """
+        sets up any heldout conditions for the dataset, if applicable.
+        called at initialization time.
+        """
+        return NotImplemented
+
+    @abstractmethod
     def __getitem__(self, index):
         # this behavior is both, dataset, and split, dependent
         return NotImplemented
@@ -270,11 +272,12 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
     def generate(self) -> typing.Collection[typing.Sequence[str]]:
         """
         generate a total of n_train + n_val + n_test examples of the dataset such that they are all unique.
-        this function makes a guarantee of uniqueness in its output, so the calling stub doesn't have to
-        worry about it.
-        to simplify things, the caller will treat it as a collection implementing __len__.
+        this function guarantees of uniqueness in its output so the calling stub doesn't have to
+        worry about ensuring it
+        to simplify things, the caller can treat it as a collection implementing __len__.
 
-        uses random seed (self.seed) if supplied to ensure reproducibility.
+        uses random seed (self.seed) if supplied
+        NOTE: `SIRDataset` now always sets a default random seed, even if none is supplied.
 
         Returns:
         ---
@@ -316,7 +319,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             if not dest.exists():
                 raise FileNotFoundError(f"{dest} does not exist")
         with (dest / "config.yaml").open("r") as f:
-            config = cls.config_class(**yaml.load(f, Loader=yaml.SafeLoader))
+            config = cls.config_class(**yaml.load(stream=f, Loader=yaml.SafeLoader))
             # config.rootdir = dest.parent # TODO---rootdir should not have been included in the hash!
             config.split = split
             config.generate = generate

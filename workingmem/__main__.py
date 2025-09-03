@@ -39,7 +39,7 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-7"
+    project_name: str = "wm-comp-limit-7.1.0"
     # method: str = "bayes"  # use this for a hparam sweep
     method: str = "grid"  # use this once hparams are fixed
     metric: dict = dataclasses.field(
@@ -72,6 +72,8 @@ class MainConfig:
             self.model.seed = self.seed
             self.trainer.seed = self.seed
             # additionally set the seed globally here?
+            # NOTE do not set seed for dataset here---we don't want datasets to vary for each instance of
+            # a model, because that would introduce too much variability in the model training outcomes
 
             import torch
             import numpy as np
@@ -112,6 +114,7 @@ def main(config: MainConfig):
 
     print_gpu_mem(train_dataset)
     print_gpu_mem(eval_dataset)
+    print_gpu_mem(test_dataset)
 
     # set up the model
     logger.info("initializing model")
@@ -284,12 +287,13 @@ if __name__ == "__main__":
                     # NOTE don't forget to change 'bayes' to 'grid' following initial hparam sweep
                     ################################
                     # sparsity of feedback (loss) over training
-                    "trainer.sparsity": {"value": 0.4},  # !!!!! change!
+                    "trainer.sparsity": {"value": 0.0},  # !!!!! change!
                     "dataset.concurrent_reg": {"value": 8},
                     "dataset.global_split_set_control": {
                         "value": "False",
                         # "value": "True",
                     },  #!!!
+                    "dataset.heldout_items_per_reg": {"value": 3},
                     ################################
                     #                              #
                     #                              #

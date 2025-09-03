@@ -12,7 +12,7 @@
 ##SBATCH -p cs-superlab-gcondo --gres=gpu:1 --account=cs-superlab-gcondo
 ##SBATCH -p gpu --gres=gpu:1 # no priority
 
-#SBATCH -a 8-15%20
+#SBATCH -a 1-1%20
 #SBATCH -t 2-00:00:00
 ##SBATCH -t 1-00:00:00
 
@@ -220,3 +220,7 @@ sleep $((RANDOM % 30 + 1))
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7/dwgvihqr # concurrent_reg=8; sparsity=0.0; mask ans tokens=1
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7/1t8u5m81 # concurrent_reg=8; sparsity=0.2; mask ans tokens=1
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7/gsb7upw8 # concurrent_reg=8; sparsity=0.4; mask ans tokens=1
+
+
+
+python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/k5bbaray # concurrent_reg=8; sparsity=0.0; challenge=1
