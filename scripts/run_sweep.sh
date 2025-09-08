@@ -5,14 +5,14 @@
 #SBATCH --mem-per-cpu 64G
 # Request a GPU partition node and access to 1 GPU
 
-#SBATCH -p 3090-gcondo --gres=gpu:1
-##SBATCH -p gpu --gres=gpu:1 --account=carney-frankmj-condo
+##SBATCH -p 3090-gcondo --gres=gpu:1
+#SBATCH -p gpu --gres=gpu:1 --account=carney-frankmj-condo
 ##SBATCH -p gpu-he --gres=gpu:1
 ##SBATCH -p l40s-gcondo --gres=gpu:1
 ##SBATCH -p cs-superlab-gcondo --gres=gpu:1 --account=cs-superlab-gcondo
 ##SBATCH -p gpu --gres=gpu:1 # no priority
 
-#SBATCH -a 1-1%20
+#SBATCH -a 1-14%20
 #SBATCH -t 2-00:00:00
 ##SBATCH -t 1-00:00:00
 
@@ -223,4 +223,10 @@ sleep $((RANDOM % 30 + 1))
 
 
 
-python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/k5bbaray # concurrent_reg=8; sparsity=0.0; challenge=1
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/4kyhxuh7 # concurrent_reg=8; sparsity=0.0; challenge=1 # debug: n_train = 1000
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/k5bbaray # concurrent_reg=8; sparsity=0.0; challenge=1
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/6qqcxtzt # concurrent_reg=4; sparsity=0.0; challenge=1 # OOM??
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/4n4p3cp7 # concurrent_reg=4; sparsity=0.0; challenge=1 # OOM??
+
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/helwa8d8 # concurrent_reg=2; sparsity=0.0; challenge=1 heldout=15/50
+python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/ckjfjz9z # concurrent_reg=2; sparsity=0.0; challenge=1 heldout=30/50
