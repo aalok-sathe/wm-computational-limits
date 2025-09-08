@@ -14,6 +14,17 @@ import json
 logger = logging.getLogger("workingmem")
 
 
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NumpyEncoder, self).default(obj)
+
+
 @dataclasses.dataclass
 class GeneratedCachedDatasetConfig:
     """
@@ -159,10 +170,13 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                 ),
                 "w",
             ) as k,
+            open(self.config.basedir / "heldout_combs.yaml", "w") as h,
         ):
             yaml.dump(self._metadata(), f, Dumper=yaml.SafeDumper)
             # yaml.dump(self._metadata(), k, Dumper=yaml.SafeDumper)
             k.write("\n")
+            if self.config.heldout_items_per_reg:
+                yaml.dump(self.reg_heldout_items, h, Dumper=yaml.SafeDumper)
 
         for split in ("train", "val", "test"):
             gen = len(data[split])
@@ -177,7 +191,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
             with split_path.open("w") as f:
                 # with gzip.open(split_path, "wt", encoding="utf-8") as f:
                 # yaml.dump(data.tolist(), f, Dumper=yaml.SafeDumper, width=float("inf"))
-                json.dump(data[split], f)
+                json.dump(data[split], f, cls=NumpyEncoder)
 
     def __len__(self):
         assert getattr(self.config, f"n_{self.config.split}") == len(self.data), (
