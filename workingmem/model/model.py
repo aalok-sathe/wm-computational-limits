@@ -136,6 +136,8 @@ class TrainingHistoryEntry:
     # outcomes
     eval_acc: float
     eval_macro_acc: float
+    test_acc: float
+    test_macro_acc: float
 
 
 class ModelWrapper(ABC):
@@ -512,7 +514,9 @@ class ModelWrapper(ABC):
                     )
                     # update latest known eval_acc
                     self.history[-1].eval_acc = float(eval_acc)
+                    self.history[-1].test_acc = float(test_acc)
                     self.history[-1].eval_macro_acc = float(eval_macro_acc)
+                    self.history[-1].test_macro_acc = float(eval_macro_acc)
                     wandb.log(
                         wandb_logged := {
                             **dataclasses.asdict(state),
@@ -526,7 +530,7 @@ class ModelWrapper(ABC):
                         }
                     )
                     logger.info(
-                        f"------------- {state.epoch_step = } {eval_loss = }, {eval_acc = }"
+                        f"------------- {state.epoch_step = } {eval_loss = :.3f}, {test_loss = :.3f},  {eval_acc = :.3f}, {test_acc = :.3f}"
                     )
                     # end eval loop mid-epoch at however-many logging steps
                     ################################
