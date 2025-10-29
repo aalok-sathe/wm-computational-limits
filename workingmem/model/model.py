@@ -52,9 +52,7 @@ class ModelConfig:
     seed: typing.Union[int, str, None] = (
         None  # seeds passed as str must be convertible to int, e.g. "42" or "1234"
     )
-    positional_embedding_type: str = (
-        "rotary"  # type of positional embedding to use, e.g. "rotary", "standard",
-    )
+    positional_embedding_type: str = "rotary"  # type of positional embedding to use, e.g. "rotary", "standard", "nope"
 
     ################################################
     # DEPRECATED: to remove this chunk at some point
