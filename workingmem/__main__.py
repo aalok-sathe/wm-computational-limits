@@ -39,7 +39,7 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-7"
+    project_name: str = "wm-comp-limit-7.2.2"
     # method: str = "bayes"  # use this for a hparam sweep
     method: str = "grid"  # use this once hparams are fixed
     metric: dict = dataclasses.field(
@@ -72,6 +72,8 @@ class MainConfig:
             self.model.seed = self.seed
             self.trainer.seed = self.seed
             # additionally set the seed globally here?
+            # NOTE do not set seed for dataset here---we don't want datasets to vary for each instance of
+            # a model, because that would introduce too much variability in the model training outcomes
 
             import torch
             import numpy as np
@@ -112,6 +114,7 @@ def main(config: MainConfig):
 
     print_gpu_mem(train_dataset)
     print_gpu_mem(eval_dataset)
+    print_gpu_mem(test_dataset)
 
     # set up the model
     logger.info("initializing model")
@@ -247,6 +250,9 @@ if __name__ == "__main__":
             "model.d_model": {"values": [64, 128, 256, 512]},
             "model.d_head": {"values": [64, 128, 256, 512]},
             # we use a smaller range of seeds just to make sure out hparams aren't overly seed-specific.
+            # TODO: this should actually be set to `None` at optimization-time so the sweep doesn't overfit
+            # to a particular subset of seeds (there is unfortunately no way to fully exclude the random seed
+            # from sweep parameters)
             "model.seed": {"values": [*map(str, range(62, 67))]},
             "trainer.learning_rate": {
                 "min": 1e-6,
@@ -260,12 +266,12 @@ if __name__ == "__main__":
         ############
         fixed_experimental_params = {
             "model.n_heads": {"value": 4},
-            "model.d_model": {"value": 128},
-            "model.d_head": {"value": 512},
+            "model.d_head": {"value": 256},
+            "model.d_model": {"value": 256},
             "model.seed": {
                 "values": [*map(str, range(42, 42 + 15))]
             },  # 15 random seeds; non-overlapping range with the seeds used for hparam sweep above
-            "trainer.learning_rate": {"value": 5e-4},
+            "trainer.learning_rate": {"value": 3e-4},
         }
         ############
 
@@ -290,6 +296,7 @@ if __name__ == "__main__":
                         "value": "False",
                         # "value": "True",
                     },  #!!!
+                    "dataset.heldout_items_per_reg": {"value": 15},
                     ################################
                     #                              #
                     #                              #
