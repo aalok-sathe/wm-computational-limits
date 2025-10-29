@@ -5,14 +5,14 @@
 #SBATCH --mem-per-cpu 64G
 # Request a GPU partition node and access to 1 GPU
 
-##SBATCH -p 3090-gcondo --gres=gpu:1
-#SBATCH -p gpu --gres=gpu:1 --account=carney-frankmj-condo
+#SBATCH -p 3090-gcondo --gres=gpu:1
+##SBATCH -p gpu --gres=gpu:1 --account=carney-frankmj-condo
 ##SBATCH -p gpu-he --gres=gpu:1
 ##SBATCH -p l40s-gcondo --gres=gpu:1
 ##SBATCH -p cs-superlab-gcondo --gres=gpu:1 --account=cs-superlab-gcondo
 ##SBATCH -p gpu --gres=gpu:1 # no priority
 
-#SBATCH -a 1-14%20
+#SBATCH -a 1-15%20
 #SBATCH -t 2-00:00:00
 ##SBATCH -t 1-00:00:00
 
@@ -229,4 +229,49 @@ sleep $((RANDOM % 30 + 1))
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/4n4p3cp7 # concurrent_reg=4; sparsity=0.0; challenge=1 # OOM??
 
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/helwa8d8 # concurrent_reg=2; sparsity=0.0; challenge=1 heldout=15/50
-python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/ckjfjz9z # concurrent_reg=2; sparsity=0.0; challenge=1 heldout=30/50
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/ckjfjz9z # concurrent_reg=2; sparsity=0.0; challenge=1 heldout=30/50
+
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/gpdnruyk # concurrent_reg=2 [n_reg=2]; sparsity=0.0; challenge=1 heldout=30/50
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/4il3ey75 # concurrent_reg=2 [n_reg=10]; sparsity=0.0; challenge=1 heldout=30/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/qp9ih3m9 # concurrent_reg=3 [n_reg=10]; sparsity=0.0; challenge=1 heldout=30/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.1.0/vhay2jri # concurrent_reg=2 [n_reg=3]; sparsity=0.0; challenge=1 heldout=30/50 
+
+
+###################
+# in this next section we're going to re-run the set of sparsity experiments but with a held-out challenge-set of items per register
+# [n_reg=100];
+
+# CONCURRENT=2
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/prygyov4 # sparsity=0.0; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/gh3zw5mw # sparsity=0.2; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/vg8d7uq1 # sparsity=0.4; heldout=15/50 
+
+# CONCURRENT=3
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/goo9782t # sparsity=0.0; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/lrcvrp3y # sparsity=0.2; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/qenlwm1s # sparsity=0.4; heldout=15/50 
+
+# CONCURRENT=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/zyutnr5j # sparsity=0.0; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/af29npcn # sparsity=0.2; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/alt0vj30 # sparsity=0.4; heldout=15/50 
+
+# CONCURRENT=8
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/h5nzbv6p # sparsity=0.0; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/7rjd9kga # sparsity=0.2; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.1/42w47r0l # sparsity=0.4; heldout=15/50 
+
+
+##########
+# we're going to do a bunch of sweeps over conditions keeping concurrent and sparsity values fixed
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/7rethi6d # conc=2 sparsity=0.0; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/76td38tj # conc=2 sparsity=0.2; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/k124yh1o # conc=2 sparsity=0.4; heldout=15/50 
+
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/8bq1fdgp # conc=4 sparsity=0.0; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/tef8fbh3 # conc=4 sparsity=0.2; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/e9ubytqx # conc=4 sparsity=0.4; heldout=15/50 
+
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/noan0dcc # conc=8 sparsity=0.0; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/ojj1rtet # conc=8 sparsity=0.2; heldout=15/50 
+python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/9ap2ww8j # conc=8 sparsity=0.4; heldout=15/50 
