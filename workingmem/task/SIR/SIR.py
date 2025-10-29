@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import typing
 import logging
 import random
+import itertools
 
 # packages
 import tokenizers
@@ -38,20 +39,26 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     """length of a trial sequence"""
     concurrent_reg: int = 2
     """number of registers to use concurrently within a trial. if this
-    number is too high, we risk a simple heuristic solution such as: 
-    simply check if an item has appeared in the prior history, when 
-    number of total items n_items is high"""
+        number is too high, we risk a simple heuristic solution such as: 
+        simply check if an item has appeared in the prior history, when 
+        number of total items n_items is high"""
     concurrent_items: int = 4
     """number of items to use concurrently within a trial"""
     heldout_reg: int = 0
-    """number (absolute) of registers to hold out. these registers will never make an
-    appearance in the train set"""
+    """[DEPRECATED] number (absolute) of registers to hold out. 
+        these registers will never make an appearance in the train set"""
     heldout_items: int = 0
-    """number (absolute) of items to hold out. these items will never appear in the train"""
+    """[DEPRECATED] number (absolute) of items to hold out. 
+        these items will never appear in the train"""
+    heldout_items_per_reg: int = 3
+    """number of items that will be held-out per register during training. these register-item
+       pairings will never appear in the training set (when mode='train') or validation set 
+       but will appear with high probability in the challenge set (when
+       mode='challenge', i.e., 'test' split)"""
     locality: typing.Union[int, None] = None
     """the locality value, when supplied, is used to sample concurrent registers locally
         (numerically close to one another). i.e., register_i can only ever occur in the same
-        trial sequence as register_{i \pm locality}.  this allows us to break the locality
+        trial sequence as register_{i pm locality}.  this allows us to break the locality
         constraint at test time to see out-of-locality-distribution generalization.
         TODO: option to manipulate locality of train/test split. alternatively, we could
         do this evaluation using a separate dataset with the locality parameter relaxed
@@ -59,18 +66,33 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     ignore_prob: float = 0.5
     """probability of an ignore instruction"""
     same_diff_prob: float = 0.5
-    """probability of a 'same' outcome on a particular register. varies independently of
-        store/ignore instruction"""
+    """probability of a 'same' outcome on a particular register. 
+        varies independently of store/ignore instruction"""
+    td_prob: float = 0.0
+    """temporal dependence probability: the probability with which a current 
+        trial uses the same role as a previous trial"""
+    n_back: typing.Union[int, None] = None
+    """specify n for n-backi-ness. must be >= 1 when provided. 
+        must be provided when temporal dependence (`td_prob`) > 0. 
+        does nothing when `td_prob` = 0."""
     global_split_set_control: typing.Union[bool, None] = None
-    """control condition where each item is assigned to a single register, so that it
-        cannot occur with any other register. this is used in O'Rielly & Frank (2002)
-        and Soni, Traylor, et al (2025, in prep.) as a control for requiring 
-        role-addressable gating (i.e., there's never going to be a case when the same
-        item is potentially stored across multiple registers and it needs to be 
-        differentiated)."""
+    """(stricter) control condition where each item is assigned to a single role 
+        (corollary: each role has a potentially small pool of items which are the 
+        only items that can co-occur with it). 
+        so a given item cannot occur with any other role. 
+        also, a given role will never have any items outside of its small set of items
+        ever occur with it
+        this is used in O'Rielly & Frank (2002) and Soni, Traylor, et al (in prep.) 
+        as a control for requiring role-addressable gating (i.e., there's never going
+        to be a case when the same item is potentially stored across multiple roles
+        and it needs to be differentiated). """
     local_split_set_control: typing.Union[bool, None] = None
+    """[DEPRECATED] (weak) control condition where, within each trial sequence, 
+        the role and item pairings are section off into split-sets 
+        (mimics the global split set condition on a micro scale)"""
+    seed: typing.Union[int, None] = None
+    """random seed for dataset generation as well as picking the random heldout combinations"""
 
-    # seed: int = None
     n_train: int = 100_000
     n_val: int = 1_000
     n_test: int = 1_000
@@ -185,13 +207,42 @@ class SIRDataset(GeneratedCachedDataset):
         """
         super().__init__(config)
         # seed the random number generator
-        if self.config.seed is not None:
-            np.random.seed(self.config.seed)
-            random.seed(self.config.seed)
+        # UPDATE: for held-out items per register, it would be nice to have a
+        # random seed so that across different initializations of the dataset we
+        # use the same held-out items per register (i.e., we want the test set to be internally consistent and
+        # actually challending w.r.t. the train and eval set)
+        # since the generated data is shuffled at training time anyway, I am not worried about a lack of
+        # randomness, so I'm changing this code to always use a random seed (default to 42 if none is provided)
+        np.random.seed(self.config.seed or 42)
+        random.seed(self.config.seed or 42)
 
         self.tokenizer = tokenizer or SIRTokenizer.from_params(
             self.config.n_reg, self.config.n_items
         )
+
+    def _heldout_setup(self):
+        """
+        sets up what's needed to construct a held-out challenge set by
+        sampling a set of items to hold out per register
+        """
+
+        # instead of enumerating all possible combinations, simply sample as many
+        # items as needed per register at the time of setting up that register
+        self.reg_heldout_items = {
+            i: tuple(
+                [
+                    *map(
+                        int,
+                        np.random.choice(
+                            range(self.config.n_items),
+                            self.config.heldout_items_per_reg,
+                            replace=False,
+                        ),
+                    )
+                ]
+            )
+            for i in range(self.config.n_reg)
+        }  # len = n_reg
 
     def __getitem__(
         self, idx: int
@@ -220,9 +271,16 @@ class SIRDataset(GeneratedCachedDataset):
 
     def generate_trial_sequence(
         self,
+        mode=None,  # 'train' | 'challenge' | None
     ) -> dict:
         """
         Generates a sequence of `seq_len` trials for the SIR task
+        ---
+        mode: str = 'train' | 'challenge' | None (default)
+            - 'train' mode uses the full set of registers and items minus held-out register-symbol pairs
+            - 'challenge' mode uses the held-out registers and items
+            - None disregards any consideration of register-item combinations and uses the full set of registers
+              and items
 
         key things to remember:
         1. we have n_reg registers and n_items items in total, but not all of them are
@@ -240,17 +298,22 @@ class SIRDataset(GeneratedCachedDataset):
 
         algorithm
           1. pick a start_idx uniformly from the range [0, n_reg) [oops we forgot about the heldout regs]
+            (start_idx exists to serve a case where locality is not None: when registers within a trial sequence
+             are likely to occur with nearby registers---and never occur with registers outside of locality bounds)
           2. choose concurrent_reg registers from the range [start_idx, start_idx + (locality or n_reg)) % n_reg
              and likewise choose concurrent_items items from the range [0, n_items)
-        +-------- (repeat for seq_len steps) ----------------------------+
-        | 3. pick one register to operate on from the chosen registers   |
-        | 4. pick an instruction using ignore_prob                       |
-        | 5. pick an item using same_diff_prob, unless there was no      |
-        |     previous item (note that 4 & 5 are independent)            |
-        |     [oops, we forgot about the heldout items]                  |
-        | 6. update the register with the item if the instruction is     |
-        |     not ignore                                                 |
-        +----------------------------------------------------------------+
+
+         +-------- (repeat for seq_len steps) ----------------------------+
+         | 3. pick one register to operate on from the chosen registers   |
+         | 4. pick an instruction using ignore_prob                       |
+         | 5. pick an item using same_diff_prob, unless there was no      |
+         |     previous item (note that 4 & 5 are independent)            |
+         |     [oops, we forgot about the heldout items]                  |
+         |     [update: supporting held-out items: ]
+         | 6. update the register with the item if the instruction is     |
+         |     'store'                                                    |
+         +----------------------------------------------------------------+
+
         """
         store = SIRTokenizer.instructions.store
         ignore = SIRTokenizer.instructions.ignore
@@ -266,6 +329,7 @@ class SIRDataset(GeneratedCachedDataset):
 
         # step 2
         # pick registers from the range [start_idx, start_idx + (locality or n_reg)) % n_reg
+        # NB: we haven't been using locality at all since the start of this project.
         if self.config.locality is not None:
             assert self.config.locality >= self.config.concurrent_reg, (
                 f"locality must be at least the number of concurrent registers to use. you supplied: {self.config.locality} < {self.config.concurrent_reg}"
@@ -288,23 +352,29 @@ class SIRDataset(GeneratedCachedDataset):
         # regs_chosen == reg_range
         regs_chosen: np.ndarray[int] = np.random.choice(
             reg_range, self.config.concurrent_reg, replace=False
-        )
+        ).astype(int)
 
         register_item_pool = {}
         # typically, we'll be using split-set control when n_reg = 2 and
         # concurrent_reg = 2. then, we'll do a very simple serial mapping of
         # item ranges to each register.
         # NOTE: UPDATE: we want to now start using split-set control with different
-        # numbers of concurrent registers, so we need to expand this hunk to be
+        # numbers of concurrent registers, so we have expanded this hunk to be
         # more general
         if self.config.global_split_set_control:
+            assert mode is None, (
+                "/held-out train/challenge modes not supported for split-set control"
+                " (if you think about it, split-set control is already a held-out mode "
+                "that exposes only certain register-item combinations during training)"
+            )
             item_range = np.arange(self.config.n_items - self.config.heldout_items)
             # split the item_range up roughly equally into `concurrent_regs` parts
             # and assign each part to a register
             items_per_reg = (item_range[-1] + 1) // self.config.concurrent_reg
-            # it isn't the best idea to repeat this splitting up process
+            # it isn't the most efficient to repeat this splitting up process
             # per trial, but as long as it's deterministic and not too costly
-            # it should be OK
+            # it should be OK---there is no randomness involved, so it produces the same
+            # item subranges each time called
             # `how_many` is the number of items used with each register per trial sequence.
             # e.g., for 64 registers and 128 items, `how_many` will be 2, and 2 registers
             # will be sampled from a larger pool of 4 registers (out of 256) that always occur
@@ -328,7 +398,7 @@ class SIRDataset(GeneratedCachedDataset):
                 # `items_per_reg` items (`this_reg_item_range`) for this register
                 register_item_pool[regs_chosen[i]] = np.random.choice(
                     this_reg_item_range, how_many, replace=False
-                )
+                ).astype(int)
 
             # make sure each register has at least two items associated with it for this trial
             # sequence; otherwise the task doesn't make sense (and we wouldn't be able to generate
@@ -338,21 +408,51 @@ class SIRDataset(GeneratedCachedDataset):
                 f"associated with each register: {register_item_pool}"
             )
 
+        forbidden_items: typing.Set[int] = set()  # items forbidden across all regs
+        if mode is not None:
+            for r in regs_chosen:
+                forbidden_items.update(self.reg_heldout_items[r])
+
+        # before exclusions, this is the range we are working with
+        # WLG, heldout items are numerically at the end of the item pool, and
+        # so far we aren't doing anything like locality or wraparound with them
+        # so this hunk is simpler
+        allowable_item_range = np.arange(
+            self.config.n_items - self.config.heldout_items, dtype=int
+        )
+        # of these, we exclude the forbidden items if we are in train mode
+        if mode == "train":
+            item_range = np.array(
+                [i for i in allowable_item_range if i not in forbidden_items]
+            )
+        elif mode == "challenge":
+            # in this special case, we want to sample items in such a way that there is a high
+            # prevalence of using held-out register-item combinations (but not every register-item
+            # combination can be held-out, because we will likely have a
+            # non-overlapping held-out item subrange for each register)
+            # for now, let's just sample from the set of forbidden items
+            item_range = np.array(
+                [i for i in allowable_item_range if i in forbidden_items]
+            )
+            if len(item_range) < self.config.concurrent_items:
+                raise ValueError(
+                    f"not enough items to sample from in challenge mode: {item_range=}; {self.config.concurrent_items=}"
+                )
+        else:  # no challenge set and no split set requested
+            item_range = allowable_item_range
+
         # in the absence of global_split_set_control, we just sample `concurrent_items`
         # uniformly from the item pool
         items_chosen: np.ndarray[int] = np.random.choice(
-            # WLG, heldout items are numerically at the end of the item pool, and
-            # so far we aren't doing anything like locality or wraparound with them
-            # so this hunk is simpler
-            np.arange(self.config.n_items - self.config.heldout_items),
+            item_range,  # `ArrayLike`
             self.config.concurrent_items,
             replace=False,
-        )
+        ).astype(int)
 
         # here is where we start maintaining the state of the registers (as in, the item they currently hold)
-        reg_state = {i: -1 for i in regs_chosen}
+        reg_state: typing.Dict[int, int] = {i: -1 for i in regs_chosen}
 
-        this_trial_seq = []
+        this_trial_seq: typing.List[typing.List[str]] = []
         # repeat seq_len times:
         for i in range(self.config.seq_len):
             # step 3
@@ -360,7 +460,7 @@ class SIRDataset(GeneratedCachedDataset):
             # NOTE: in the future, to manipulate delayed recall from a certain register,
             # we can use the `p=...` argument to np.random.choice to bias the selection
             # away from a certain register
-            this_reg_idx = np.random.choice(regs_chosen, p=None)
+            this_reg_idx = np.random.choice(regs_chosen, p=None).astype(int)
 
             # step 4
             # pick an instruction using ignore_prob
@@ -393,10 +493,12 @@ class SIRDataset(GeneratedCachedDataset):
                     else items_chosen
                 )
                 # NOTE this line by itself doesn't guarantee that the item is new
-                this_item = np.random.choice(this_trial_item_pool, p=None)
+                this_item = np.random.choice(this_trial_item_pool, p=None).astype(int)
                 # so we need this follow-up loop to keep drawing until it's new
                 while this_item == reg_state[this_reg_idx]:
-                    this_item = np.random.choice(this_trial_item_pool, p=None)
+                    this_item = np.random.choice(this_trial_item_pool, p=None).astype(
+                        int
+                    )
                 this_label = diff
             else:
                 this_item = reg_state[this_reg_idx]
@@ -422,12 +524,26 @@ class SIRDataset(GeneratedCachedDataset):
             "regs_used": tuple(regs_chosen.tolist()),
             "items_used": tuple(items_chosen.tolist()),
             "locality": self.config.locality,
-            # lots of gymnastics here to make sure the register_item_pool serializable
+            # lots of gymnastics here to make sure the register_item_pool is serializable
             "split_set_control": tuple(
                 (
                     {int(k): tuple(v.tolist()) for k, v in register_item_pool.items()}
                 ).items()
             ),
+            "heldout_items_used": tuple(
+                (
+                    int(r),
+                    tuple(
+                        [
+                            *set(self.reg_heldout_items[r]).intersection(
+                                set(items_chosen.tolist())
+                            )
+                        ]
+                    ),
+                )
+                for r in regs_chosen
+            ),
+            "mode": mode or "none",
         }
 
     @property
@@ -438,10 +554,47 @@ class SIRDataset(GeneratedCachedDataset):
         """
         return list(SIRDataset.trial_label_mask * self.config.seq_len)
 
-    def generate(self) -> typing.Collection[typing.Sequence[str]]:
+    @classmethod
+    def _serialize_trial(cls, trial: dict) -> frozenset:
+        return frozenset(sorted(trial.items()))
+
+    def _generate_split(
+        self, n_examples, mode, conflicts=()
+    ) -> typing.Collection[typing.Sequence[str]]:
+        examples = set(map(SIRDataset._serialize_trial, conflicts))
+        examples_list = []
+
+        # we are constructing a fully in-distribution dataset
+        # where train, val, and test are iid
+        total = n_examples
+        for _ in tqdm(
+            range(total),
+            desc=f"generating {total} SIR trials in {mode=}",
+            total=total,
+        ):
+            # check for duplicate trials
+            while True:
+                try:
+                    trial = self.generate_trial_sequence(mode=mode)
+                except ValueError as e:
+                    logger.warning(f"failed to generate single trial due to: {e}")
+                    continue
+                fstrial = SIRDataset._serialize_trial(trial)
+                if fstrial in examples:
+                    continue  # discard trial
+                examples.add(fstrial)
+                examples_list.append(trial)
+                break  # break while-loop
+
+        return examples_list
+
+    def generate(self) -> typing.Dict[str, typing.Collection[typing.Sequence[str]]]:
         """
         makes repeated calls to `_generate_trial_sequence` to generate a total of
         n_train + n_val + n_test examples.
+        uses `SIRConfig.heldout_items_per_reg` to determine whether any register-item
+        pairings are held-out during training/validation and only appear during testing,
+        and passes appropriate kwargs to `generate_trial_sequence` to enforce this.
         """
         logger.info("generating data for SIR task")
 
@@ -450,22 +603,36 @@ class SIRDataset(GeneratedCachedDataset):
             np.random.seed(self.config.seed)
             random.seed(self.config.seed)
 
-        examples = set()
-        examples_list = []
+        if self.config.heldout_items_per_reg == 0:
+            # we are constructing a fully in-distribution dataset
+            # where train, val, and test are iid
+            total = self.config.n_train + self.config.n_val + self.config.n_test
+            all_examples_list = self._generate_split(total, mode=None)
 
-        total = self.config.n_train + self.config.n_val + self.config.n_test
-        for _ in tqdm(
-            range(total),
-            desc="generating SIR trials",
-            total=total,
-        ):
-            # check for duplicate trials
-            while True:
-                trial = self.generate_trial_sequence()
-                fstrial = frozenset(sorted(trial.items()))
-                if fstrial not in examples:
-                    examples.add(fstrial)
-                    examples_list.append(trial)
-                    break
-            # yield _generate_trial()
-        return list(examples_list)
+            n_train, n_val = (self.config.n_train, self.config.n_val)
+            return {
+                "train": all_examples_list[:n_train],
+                "val": all_examples_list[n_train : n_train + n_val],
+                "test": all_examples_list[n_train + n_val :],
+            }
+
+        else:  # self.config.heldout_items_per_reg > 0
+            # first, we create a train set and an iid validation set using 'train' mode
+            train_val_total = self.config.n_train + self.config.n_val
+            train_val_examples_list = self._generate_split(
+                train_val_total, mode="train"
+            )
+
+            # next, we create a challenge set using 'challenge' mode
+            # and pass in the train_val_examples_list as conflicts to avoid overlap
+            # with train/val data
+            challenge_total = self.config.n_test
+            challenge_examples_list = self._generate_split(
+                challenge_total, mode="challenge", conflicts=train_val_examples_list
+            )
+
+            return {
+                "train": train_val_examples_list[: self.config.n_train],
+                "val": train_val_examples_list[self.config.n_train :],
+                "test": challenge_examples_list,
+            }

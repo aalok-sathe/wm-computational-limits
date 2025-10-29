@@ -134,6 +134,8 @@ class TrainingHistoryEntry:
     # outcomes
     eval_acc: float
     eval_macro_acc: float
+    test_acc: float
+    test_macro_acc: float
 
 
 class ModelWrapper(ABC):
@@ -335,7 +337,7 @@ class ModelWrapper(ABC):
         test_dataset: GeneratedCachedDataset = None,
     ):
         """
-        given an `eval_dataset`, periodically evaluates model on eval_dataset and logs the results
+        given an `eval_dataset` and `test_dataset`, periodically evaluates model and logs the results
         """
 
         # create an entry for history logging, which will be updated as we go
@@ -355,6 +357,8 @@ class ModelWrapper(ABC):
                 epoch=0,  # to be filled in later
                 eval_acc=None,  # to be filled in later
                 eval_macro_acc=None,  # to be filled in later
+                test_acc=None,  # to be filled in later
+                test_macro_acc=None,  # to be filled in later
             )
         ]
 
@@ -500,9 +504,17 @@ class ModelWrapper(ABC):
                         eval_result["acc"],
                         eval_result["macro_acc"],
                     )
+                    test_result = self.test(test_dataset, test_predictions_table=None)
+                    test_loss, test_acc, test_macro_acc = (
+                        test_result["loss"],
+                        test_result["acc"],
+                        test_result["macro_acc"],
+                    )
                     # update latest known eval_acc
                     self.history[-1].eval_acc = float(eval_acc)
+                    self.history[-1].test_acc = float(test_acc)
                     self.history[-1].eval_macro_acc = float(eval_macro_acc)
+                    self.history[-1].test_macro_acc = float(eval_macro_acc)
                     wandb.log(
                         wandb_logged := {
                             **dataclasses.asdict(state),
@@ -510,10 +522,13 @@ class ModelWrapper(ABC):
                             "eval_loss": eval_loss,
                             "eval_acc": eval_acc,
                             "eval_macro_acc": eval_macro_acc,
+                            "test_loss": test_loss,
+                            "test_acc": test_acc,
+                            "test_macro_acc": test_macro_acc,
                         }
                     )
                     logger.info(
-                        f"------------- {state.epoch_step = } {eval_loss = }, {eval_acc = }"
+                        f"------------- {state.epoch_step = } {eval_loss = :.3f}, {test_loss = :.3f},  {eval_acc = :.3f}, {test_acc = :.3f}"
                     )
                     # end eval loop mid-epoch at however-many logging steps
                     ################################
@@ -537,13 +552,19 @@ class ModelWrapper(ABC):
                     eval_result["acc"],
                     eval_result["macro_acc"],
                 )
+                test_result = self.test(test_dataset, test_predictions_table=None)
+                test_loss, test_acc, test_macro_acc = (
+                    test_result["loss"],
+                    test_result["acc"],
+                    test_result["macro_acc"],
+                )
                 # update latest known eval_acc
                 self.history[-1].eval_acc = float(eval_acc)
                 self.history[-1].eval_macro_acc = float(eval_macro_acc)
                 state.cumAUC += eval_acc * 1
 
                 logger.info(
-                    f"EVAL: {state.epoch = } {eval_loss = }, {eval_acc = }, {eval_macro_acc = }, {state.cumAUC = }"
+                    f"EVAL: {state.epoch = } {eval_loss = }, {eval_acc = }, {test_loss = }, {test_acc = }"
                 )
 
                 wandb.log(
@@ -553,6 +574,9 @@ class ModelWrapper(ABC):
                         "eval_loss": eval_loss,
                         "eval_acc": eval_acc,
                         "eval_macro_acc": eval_macro_acc,
+                        "test_loss": test_loss,
+                        "test_acc": test_acc,
+                        "test_macro_acc": test_macro_acc,
                         "cumAUC": state.cumAUC,
                         "cumAUC_normalized": state.cumAUC / state.epoch,
                     }
