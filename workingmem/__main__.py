@@ -259,13 +259,13 @@ if __name__ == "__main__":
         # NOTE: change these based on the outcomes of the hparam optimization sweep above!
         ############
         fixed_experimental_params = {
-            "model.n_heads": {"value": 6},
-            "model.d_model": {"value": 256},
-            "model.d_head": {"value": 128},
+            "model.n_heads": {"value": 4},
+            "model.d_model": {"value": 128},
+            "model.d_head": {"value": 512},
             "model.seed": {
                 "values": [*map(str, range(42, 42 + 15))]
             },  # 15 random seeds; non-overlapping range with the seeds used for hparam sweep above
-            "trainer.learning_rate": {"value": 1e-4},
+            "trainer.learning_rate": {"value": 5e-4},
         }
         ############
 
@@ -284,8 +284,8 @@ if __name__ == "__main__":
                     # NOTE don't forget to change 'bayes' to 'grid' following initial hparam sweep
                     ################################
                     # sparsity of feedback (loss) over training
-                    "trainer.sparsity": {"value": 0.4},  # !!!!! change!
-                    "dataset.concurrent_reg": {"value": 8},
+                    "trainer.sparsity": {"value": 0.0},  # !!!!! change!
+                    "dataset.concurrent_reg": {"value": 2},
                     "dataset.global_split_set_control": {
                         "value": "False",
                         # "value": "True",

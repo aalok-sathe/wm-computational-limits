@@ -38,37 +38,51 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     """length of a trial sequence"""
     concurrent_reg: int = 2
     """number of registers to use concurrently within a trial. if this
-    number is too high, we risk a simple heuristic solution such as: 
-    simply check if an item has appeared in the prior history, when 
-    number of total items n_items is high"""
+        number is too high, we risk a simple heuristic solution such as: 
+        simply check if an item has appeared in the prior history, when 
+        number of total items n_items is high"""
     concurrent_items: int = 4
     """number of items to use concurrently within a trial"""
     heldout_reg: int = 0
-    """number (absolute) of registers to hold out. these registers will never make an
-    appearance in the train set"""
+    """[DEPRECATED] number (absolute) of registers to hold out. 
+        these registers will never make an appearance in the train set"""
     heldout_items: int = 0
-    """number (absolute) of items to hold out. these items will never appear in the train"""
+    """[DEPRECATED] number (absolute) of items to hold out. 
+        these items will never appear in the train"""
     locality: typing.Union[int, None] = None
     """the locality value, when supplied, is used to sample concurrent registers locally
-        (numerically close to one another). i.e., register_i can only ever occur in the same
-        trial sequence as register_{i \pm locality}.  this allows us to break the locality
-        constraint at test time to see out-of-locality-distribution generalization.
-        TODO: option to manipulate locality of train/test split. alternatively, we could
-        do this evaluation using a separate dataset with the locality parameter relaxed
-        (which should make the test data OOD)"""
+        (numerically close to one another). i.e., register_i can only ever 
+        occur in the same trial sequence as register_{i \pm locality}.  
+        this allows us to break the locality constraint at test time to see
+        out-of-locality-distribution generalization.
+        this is one way to introduce a correlation structure in the (training) data."""
     ignore_prob: float = 0.5
     """probability of an ignore instruction"""
     same_diff_prob: float = 0.5
-    """probability of a 'same' outcome on a particular register. varies independently of
-        store/ignore instruction"""
+    """probability of a 'same' outcome on a particular register. 
+        varies independently of store/ignore instruction"""
+    td_prob: float = 0.0
+    """temporal dependence probability: the probability with which a current 
+        trial uses the same role as a previous trial"""
+    n_back: typing.Union[int, None] = None
+    """specify n for n-backi-ness. must be >= 1 when provided. 
+        must be provided when temporal dependence (`td_prob`) > 0. 
+        does nothing when `td_prob` = 0."""
     global_split_set_control: typing.Union[bool, None] = None
-    """control condition where each item is assigned to a single register, so that it
-        cannot occur with any other register. this is used in O'Rielly & Frank (2002)
-        and Soni, Traylor, et al (2025, in prep.) as a control for requiring 
-        role-addressable gating (i.e., there's never going to be a case when the same
-        item is potentially stored across multiple registers and it needs to be 
-        differentiated)."""
+    """(stricter) control condition where each item is assigned to a single role 
+        (corollary: each role has a potentially small pool of items which are the 
+        only items that can co-occur with it). 
+        so a given item cannot occur with any other role. 
+        also, a given role will never have any items outside of its small set of items
+        ever occur with it
+        this is used in O'Rielly & Frank (2002) and Soni, Traylor, et al (in prep.) 
+        as a control for requiring role-addressable gating (i.e., there's never going
+        to be a case when the same item is potentially stored across multiple roles
+        and it needs to be differentiated). """
     local_split_set_control: typing.Union[bool, None] = None
+    """[DEPRECATED] (weak) control condition where, within each trial sequence, 
+        the role and item pairings are section off into split-sets 
+        (mimics the global split set condition on a micro scale)"""
 
     # seed: int = None
     n_train: int = 100_000
@@ -422,7 +436,7 @@ class SIRDataset(GeneratedCachedDataset):
             "regs_used": tuple(regs_chosen.tolist()),
             "items_used": tuple(items_chosen.tolist()),
             "locality": self.config.locality,
-            # lots of gymnastics here to make sure the register_item_pool serializable
+            # lots of gymnastics here to make sure the register_item_pool is serializable
             "split_set_control": tuple(
                 (
                     {int(k): tuple(v.tolist()) for k, v in register_item_pool.items()}
