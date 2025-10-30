@@ -487,13 +487,28 @@ class SIRDataset(GeneratedCachedDataset):
             # or, follow the familiar register-picking procedure (pick uniformly)
             # constraint: in order for `n_back` to be meaningful when
             # temporal dependence is 1, we cannot have `n_back` < `concurrent_reg`
+            # until we've accumulated at least `n_back` steps, we cannot do temporal dependence
+            if i < (self.config.n_back or 0) or (
+                np.random.rand() >= self.config.td_prob
+            ):
+                # pick one register to operate on from the chosen registers
+                # NOTE: in the future, to manipulate delayed recall from a certain register,
+                # we can use the `p=...` argument to np.random.choice to bias the selection
+                # away from a certain register
+                this_reg_idx = np.random.choice(regs_chosen, p=None).astype(int)
 
-            # pick one register to operate on from the chosen registers
-            # NOTE: in the future, to manipulate delayed recall from a certain register,
-            # we can use the `p=...` argument to np.random.choice to bias the selection
-            # away from a certain register
-
-            this_reg_idx = np.random.choice(regs_chosen, p=None).astype(int)
+            else:
+                assert self.config.n_back is not None and self.config.n_back >= 1, (
+                    "`n_back` must be specified and >= 1 when `td_prob` > 0"
+                )
+                # assert (
+                #     self.config.n_back >= self.config.concurrent_reg
+                # ), "`n_back` must be at least as large as `concurrent_reg` to be meaningful"
+                # pick the same register as `n_back` steps ago
+                this_reg_token = this_trial_seq[
+                    -self.config.n_back * 4 + 1
+                ]  # +1 to get the reg token
+                this_reg_idx = int(this_reg_token.split("_")[1])
 
             # -----------------------------------------------------
             # step 4
