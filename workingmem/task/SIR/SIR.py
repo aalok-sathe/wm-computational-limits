@@ -297,22 +297,38 @@ class SIRDataset(GeneratedCachedDataset):
            wraparound, and picking registers uniformly without replacement from this range
 
         algorithm
-          1. pick a start_idx uniformly from the range [0, n_reg) [oops we forgot about the heldout regs]
-            (start_idx exists to serve a case where locality is not None: when registers within a trial sequence
-             are likely to occur with nearby registers---and never occur with registers outside of locality bounds)
-          2. choose concurrent_reg registers from the range [start_idx, start_idx + (locality or n_reg)) % n_reg
-             and likewise choose concurrent_items items from the range [0, n_items)
-
-         +-------- (repeat for seq_len steps) ----------------------------+
-         | 3. pick one register to operate on from the chosen registers   |
-         | 4. pick an instruction using ignore_prob                       |
-         | 5. pick an item using same_diff_prob, unless there was no      |
-         |     previous item (note that 4 & 5 are independent)            |
-         |     [oops, we forgot about the heldout items]                  |
-         |     [update: supporting held-out items: ]
-         | 6. update the register with the item if the instruction is     |
-         |     'store'                                                    |
-         +----------------------------------------------------------------+
+        +-------+
+        +--------- (this happens once at the level of the trial seq) -----+
+        | 1. pick a start_idx uniformly at random from the range [0, n_reg)
+        |     (start_idx exists to serve a case where locality is not None: when registers
+        |     within a trial sequence are likely to occur with nearby registers---and never
+        |     occur with registers outside of locality bounds)
+        |     in practice, locality has not been used so far---this means that by default
+        |     the entire range of n_reg roles is utilized to sample concurrent_reg from
+        |
+        | 2. choose concurrent_reg registers from the range
+        |       [start_idx, start_idx + (locality or n_reg)) % n_reg
+        |    and likewise choose concurrent_items items from the range [0, n_items)
+        |
+        +-----------------------------------------------------------------+
+        |
+        |    +-------- (repeat for seq_len steps) ----------------------------+
+        |    | 3. pick one register to operate on from the chosen registers
+        |    |   [3'] with probability `td_prob`, this role will be the same
+        |    |      as the one exactly `n_back` steps ago
+        |    |
+        |    | 4. pick an instruction using ignore_prob
+        |    |
+        |    | 5. pick an item using same_diff_prob, unless there was no
+        |    |     previous item (note that 4 & 5 are independent)
+        |    |     [oops, we forgot about the heldout items]
+        |    |     [update: supporting held-out items]
+        |    |
+        |    | 6. update the register with the item if the instruction is
+        |    |     'store'
+        |    +----------------------------------------------------------------+
+        |
+        +
 
         """
         store = SIRTokenizer.instructions.store
@@ -323,11 +339,15 @@ class SIRDataset(GeneratedCachedDataset):
         reg = SIRTokenizer.symbols.register
         item = SIRTokenizer.symbols.item
 
+        # -----------------------------------------------------
         # step 1
+        # -----------------------------------------------------
         # pick a start_idx uniformly from the range [0, n_reg)
         start_idx = np.random.randint(0, self.config.n_reg)
 
+        # -----------------------------------------------------
         # step 2
+        # -----------------------------------------------------
         # pick registers from the range [start_idx, start_idx + (locality or n_reg)) % n_reg
         # NB: we haven't been using locality at all since the start of this project.
         if self.config.locality is not None:
@@ -453,16 +473,31 @@ class SIRDataset(GeneratedCachedDataset):
         reg_state: typing.Dict[int, int] = {i: -1 for i in regs_chosen}
 
         this_trial_seq: typing.List[typing.List[str]] = []
+
         # repeat seq_len times:
         for i in range(self.config.seq_len):
+            # -----------------------------------------------------
             # step 3
+            # -----------------------------------------------------
+
+            # fork in the road!
+            # step [3a]
+            # ---------
+            # using the `td_prob` parameter, either pick the same role as `n_back` steps ago
+            # or, follow the familiar register-picking procedure (pick uniformly)
+            # constraint: in order for `n_back` to be meaningful when
+            # temporal dependence is 1, we cannot have `n_back` < `concurrent_reg`
+
             # pick one register to operate on from the chosen registers
             # NOTE: in the future, to manipulate delayed recall from a certain register,
             # we can use the `p=...` argument to np.random.choice to bias the selection
             # away from a certain register
+
             this_reg_idx = np.random.choice(regs_chosen, p=None).astype(int)
 
+            # -----------------------------------------------------
             # step 4
+            # -----------------------------------------------------
             # pick an instruction using ignore_prob
             # NOTE: AMENDMENT: for short trial sequences, if 'ignore' is picked too often, we end up
             # with a situation where labels are highly imbalanced---'diff' appears way more often than
@@ -477,7 +512,9 @@ class SIRDataset(GeneratedCachedDataset):
                     ignore if np.random.rand() < self.config.ignore_prob else store
                 )
 
+            # -----------------------------------------------------
             # step 5
+            # -----------------------------------------------------
             # pick an item using same_diff_prob, unless there was no previous item, in which case,
             # we must pick a new item and make the instruction be 'diff' by default
             if (
@@ -513,7 +550,9 @@ class SIRDataset(GeneratedCachedDataset):
             ]
             this_trial_seq.extend(this_trial)
 
+            # -----------------------------------------------------
             # step 6
+            # -----------------------------------------------------
             # update the register with the new item if the instruction is not ignore
             if this_instr != ignore:
                 # doesn't matter if it's the same or a new item; we update
