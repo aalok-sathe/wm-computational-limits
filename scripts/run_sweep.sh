@@ -5,14 +5,14 @@
 #SBATCH --mem-per-cpu 64G
 # Request a GPU partition node and access to 1 GPU
 
-#SBATCH -p 3090-gcondo --gres=gpu:1
-##SBATCH -p gpu --gres=gpu:1 --account=carney-frankmj-condo
+##SBATCH -p 3090-gcondo --gres=gpu:1
+#SBATCH -p gpu --gres=gpu:1 --account=carney-frankmj-condo
 ##SBATCH -p gpu-he --gres=gpu:1
 ##SBATCH -p l40s-gcondo --gres=gpu:1
 ##SBATCH -p cs-superlab-gcondo --gres=gpu:1 --account=cs-superlab-gcondo
 ##SBATCH -p gpu --gres=gpu:1 # no priority
 
-#SBATCH -a 1-15%20
+#SBATCH -a 1-9%20
 #SBATCH -t 2-00:00:00
 ##SBATCH -t 1-00:00:00
 
@@ -274,4 +274,24 @@ sleep $((RANDOM % 30 + 1))
 
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/noan0dcc # conc=8 sparsity=0.0; heldout=15/50 
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/ojj1rtet # conc=8 sparsity=0.2; heldout=15/50 
-python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/9ap2ww8j # conc=8 sparsity=0.4; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.2.2/9ap2ww8j # conc=8 sparsity=0.4; heldout=15/50 
+
+
+# td prob 0,.5,1 n_back 5
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.0/gncj6lbu # conc=2 sparsity=0.0; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.0/j3nhalg5 # conc=4 sparsity=0.0; heldout=15/50 
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.0/gydtzx1k # conc=8 sparsity=0.0; heldout=15/50 
+
+
+# dataset.td_prob=0
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/wuj0loqv
+# dataset.td_prob=0.5
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/wloq2dzr
+# dataset.td_prob=0.7
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/8rk9505v
+# dataset.td_prob=0.8
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/13ijgrap
+# dataset.td_prob=0.9
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/4rrckcd1
+# dataset.td_prob=1
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/0edk808h

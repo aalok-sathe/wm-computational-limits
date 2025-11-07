@@ -670,7 +670,7 @@ class ModelWrapper(ABC):
         batch_size: int = 128,
         return_predictions: bool = False,
         mask_answer_tokens=True,
-    ) -> typing.Tuple[float, float]:
+    ) -> dict:
         """
         Returns the average loss and accuracy of the model on the dataset (assumed eval or test split)
 
