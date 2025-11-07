@@ -316,6 +316,8 @@ class SIRDataset(GeneratedCachedDataset):
         |    | 3. pick one register to operate on from the chosen registers
         |    |   [3'] with probability `td_prob`, this role will be the same
         |    |      as the one exactly `n_back` steps ago
+        |    |      [this has no bearing on what symbol is picked---with 50% prob
+        |    |       we still have different symbols]
         |    |
         |    | 4. pick an instruction using ignore_prob
         |    |
