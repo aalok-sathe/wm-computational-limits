@@ -1,8 +1,8 @@
+#!/usr/bin/env python3
 """
-run as: `python -m workingmem`
+run as: `python -m workingmem [-h]`
 """
 
-#!/usr/bin/env python3
 import typing
 import dataclasses
 import yaml
@@ -39,13 +39,23 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-7.2.2"
+    project_name: str = "wm-comp-limit-7.3.1"
     # method: str = "bayes"  # use this for a hparam sweep
     method: str = "grid"  # use this once hparams are fixed
     metric: dict = dataclasses.field(
         default_factory=lambda: {"goal": "maximize", "name": "eval_acc"}
     )
     program: str = "run_wm.py"  # the program to run with a wandb sweep agent
+    from_config: typing.Union[str, None] = None
+    """
+    `from_config`: only applicable with `create_sweep=True`. reads in a config
+    file (YAML) if supplied that enumerates variations over individual variables
+    the product of each variable's possible values is used to create a product
+    of that many new sweeps, also printed out as a table at the end of running
+    this module with this option enabled (both `create_sweep` and `from_config`).
+    expects a simple enumaration of values (e.g., `dataset.concurrent_reg: [2,4,8]`)
+    rather than `wandb`-specific format (i.e., `dataset.concurrent_reg: {values: [2,4,8]}`)  
+    """
 
 
 @dataclasses.dataclass
@@ -271,7 +281,7 @@ if __name__ == "__main__":
             "model.seed": {
                 "values": [*map(str, range(42, 42 + 15))]
             },  # 15 random seeds; non-overlapping range with the seeds used for hparam sweep above
-            "trainer.learning_rate": {"value": 3e-4},
+            "trainer.learning_rate": {"value": 5e-4},
         }
         ############
 
@@ -297,6 +307,8 @@ if __name__ == "__main__":
                         # "value": "True",
                     },  #!!!
                     "dataset.heldout_items_per_reg": {"value": 15},
+                    "dataset.td_prob": {"values": [0, 0.5, 1]},
+                    "dataset.n_back": {"value": 5},
                     ################################
                     #                              #
                     #                              #
@@ -331,7 +343,7 @@ if __name__ == "__main__":
                     # dataset parameters
                     ################################
                     "dataset.seq_len": {"value": 300},
-                    "dataset.n_reg": {"value": 100},
+                    "dataset.n_reg": {"value": 50},
                     "dataset.n_train": {"value": 100_000},
                     # this was changed from 4 to 128 to accommodate split set control for
                     # 64 concurrent registers (doing split set control requires at least 2 items
@@ -351,15 +363,52 @@ if __name__ == "__main__":
                     # "dataset.local_split_set_control": {"value": "False"},  # NOTE: NOT IMPLEMENTED
                     "dataset.heldout_reg": {"value": 0},
                     "dataset.heldout_items": {"value": 0},
-                    "dataset.ignore_prob": {"value": 0.5},
+                    "dataset.ignore_prob": {"value": 0.0},
                 },
             },
         )
 
-        sweep_id = wandb.sweep(sweep_config, project=config.wandb.project_name)
-        # dump all the parameters of this sweep to stdout
-        logger.info(f"parameters of {sweep_id}:\n{yaml.dump(sweep_config)}")
-        logger.info(f"created sweep with id: {sweep_id} !")
+        if config.wandb.from_config is not None:
+            # read the YAML file
+            with open(config.wandb.from_config, "r") as f:
+                from_config_params = yaml.load(f, Loader=yaml.FullLoader)
+            # for each of the variables (keys) in this config, we want to do
+            # a product of all possible values each variable takes
+            sweep_configs = []
+            from itertools import product
+
+            keys, values = zip(*from_config_params.items())
+            for vals in product(*values):
+                this_sweep_config = sweep_config.copy()
+                this_sweep_config["parameters"] = this_sweep_config["parameters"].copy()
+                print("# ---- -------- new sweep ----")
+                for key, val in zip(keys, vals):
+                    this_sweep_config["parameters"][key] = {"value": val}
+
+                sweep_id = wandb.sweep(
+                    this_sweep_config, project=config.wandb.project_name
+                )
+                bash_template = f"python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/{config.wandb.project_name}/{sweep_id}"
+                # what makes this sweep special?
+                sweep_configs.append(
+                    "# "
+                    + " ".join(
+                        f"{k}={v}"
+                        for k, v in zip(keys, vals)
+                        if k in this_sweep_config["parameters"]
+                    )
+                    + "\n# "
+                    + bash_template
+                    + "\n"
+                )
+
+            print(*sweep_configs, sep="")
+
+        else:
+            sweep_id = wandb.sweep(sweep_config, project=config.wandb.project_name)
+            # dump all the parameters of this sweep to stdout
+            logger.info(f"parameters of {sweep_id}:\n{yaml.dump(sweep_config)}")
+            logger.info(f"created sweep with id: {sweep_id} !")
 
     elif config.wandb.run_sweep:
         # if we're doing a sweep, we need to update the config with the sweep values
