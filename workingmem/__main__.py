@@ -317,6 +317,7 @@ if __name__ == "__main__":
                     },  # !
                     # "filter_by_accuracy": {"value": "True"}, # only relevant when `from_pretrained` is provided
                     "model.n_layers": {"value": 2},
+                    "model.positional_embedding_type": {"value": "rotary"},
                     ################################
                     # trainer parameters
                     ################################
