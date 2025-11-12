@@ -46,7 +46,12 @@ def get_wandb_runs(
         metrics = run.history(pandas=True, samples=10_000)
         metrics["run_id"] = run.name
         metrics["sweep_id"] = sweep_id
-        dfs += [metrics.groupby("epoch").first().reset_index()]
+        try:
+            dfs += [metrics.groupby("epoch").first().reset_index()]
+        except KeyError:
+            # this run doesn't have enough data to have 'epoch' as a key; skip for now
+            print(f"\tskipping run: {sweep_id}/{run.name}")
+            pass
 
     df = pd.concat(dfs).reset_index(drop=True)
     return df
