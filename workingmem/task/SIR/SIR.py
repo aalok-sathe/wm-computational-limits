@@ -50,7 +50,7 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     heldout_items: int = 0
     """[DEPRECATED] number (absolute) of items to hold out. 
         these items will never appear in the train"""
-    heldout_items_per_reg: int = 3
+    heldout_items_per_reg: int = 15
     """number of items that will be held-out per register during training. these register-item
        pairings will never appear in the training set (when mode='train') or validation set 
        but will appear with high probability in the challenge set (when
@@ -78,6 +78,8 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     """specify N for n-back-i-ness. must be >= 1 when provided. 
         must be provided when temporal dependence (`td_prob`) > 0. 
         does nothing when `td_prob` = 0.
+        should be = `concurrent_reg` for `role_n_congruence` to be an
+        effective signal
         *f(N), where f(N) is ignore-trial-aware (TODO; NotImplemented)
         """
     role_n_congruence: typing.Union[float, None] = 1.0
@@ -140,8 +142,8 @@ class SIRTokenizer:
 
     @dataclass
     class symbols:
-        register: typing.Callable = lambda i: f"reg_{i}"
-        item: typing.Callable = lambda i: f"item_{i}"
+        register: typing.Callable = lambda i: f"reg_{int(i)}"
+        item: typing.Callable = lambda i: f"item_{int(i)}"
 
     @classmethod
     def from_params(
@@ -330,6 +332,9 @@ class SIRDataset(GeneratedCachedDataset):
         |    |      as the one exactly `n_back` steps ago
         |    |      [this has no bearing on what symbol is picked---with 50%
         |    |       prob we still have different symbols]
+        |    |     if not all roles have been picked yet, pick from among those
+        |    |      that haven't yet made an appearance---this avoids the case
+        |    |      where we have role_n_congruence and n_back>0.
         |    |
         |    | 4. pick an instruction using ignore_prob
         |    |
@@ -498,21 +503,23 @@ class SIRDataset(GeneratedCachedDataset):
 
         def _pick_maybe_congruent_reg(i: int) -> int:
             """reusable code hunk to probabilistically pick an N-congruent
-            role or otherwise uniformly random role, given the current trial index `i`"""
-            if (i < self.config.n_back or 0) or (
-                np.random.rand() <= self.config.role_n_congruence
+            role or otherwise uniformly random role, given the
+            current trial index `i`. returns the integer corresponding
+            to the role; not the role token (e.g. `reg_23`)"""
+            if (i <= (self.config.n_back or 0)) or (
+                np.random.rand() > self.config.role_n_congruence
             ):
+                # uniformly at random pick a register to operate on from
+                # among the chosen registers
+                return np.random.choice(regs_chosen, p=None).astype(int)
+            else:
                 # use the same role that occurred f(N)* trials ago
                 # *f(N), if enabled, excludes ignore trials. whether or not
                 # this is the case, the registers from f(N) ago will always be
                 # tracked in the same data structure, `this_reg_seq`
-                this_reg_token = this_reg_seq[-self.config.n_back]
-                return int(this_reg_token.split("_")[1])
-
-            else:
-                # uniformly at random pick a register to operate on from
-                # among the chosen registers
-                return np.random.choice(regs_chosen, p=None).astype(int)
+                this_reg_idx = this_reg_seq[-self.config.n_back]
+                return this_reg_idx
+                # return int(this_reg_token.split("_")[1])
 
         # repeat `seq_len` times (each iteration of the loop generates a trial):
         for i in range(self.config.seq_len):
@@ -538,7 +545,7 @@ class SIRDataset(GeneratedCachedDataset):
 
             n_back = None
             # is this an N-back trial?
-            if i < (self.config.n_back or 0) or (
+            if (i <= (self.config.n_back or 0)) or (
                 np.random.rand() >= self.config.td_prob
             ):  # NOT an N-back trial
                 # 'correct' label (same/diff) is based on role identity
@@ -581,7 +588,7 @@ class SIRDataset(GeneratedCachedDataset):
                 (not n_back and reg_state[this_reg_idx] == -1)
                 or
                 # n-back; fewer than n trials so far; can't compare with n-back
-                (n_back and i < (self.config.n_back or 0))
+                (n_back and (i <= (self.config.n_back or 0)))
                 # we picked 'diff'
                 or (np.random.rand() > self.config.same_diff_prob)
             ):
@@ -595,7 +602,7 @@ class SIRDataset(GeneratedCachedDataset):
 
                     # the below while-loop samples items until drawing one that's different from N ago
                     this_item = np.random.choice(items_chosen, p=None).astype(int)
-                    while (i >= self.config.n_back) and (
+                    while (i > self.config.n_back) and (
                         this_item == this_item_seq[-self.config.n_back]
                     ):
                         this_item = np.random.choice(items_chosen, p=None).astype(int)
@@ -638,8 +645,8 @@ class SIRDataset(GeneratedCachedDataset):
                 this_label,
             ]
             this_trial_seq.extend(this_trial)
-            this_reg_seq.append(reg(this_reg_idx))
-            this_item_seq.append(item(this_item))
+            this_reg_seq.append(this_reg_idx)
+            this_item_seq.append(this_item)
 
             # -----------------------------------------------------
             # step 6

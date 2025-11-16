@@ -301,14 +301,15 @@ if __name__ == "__main__":
                     ################################
                     # sparsity of feedback (loss) over training
                     "trainer.sparsity": {"value": 0.0},  # !!!!! change!
-                    "dataset.concurrent_reg": {"value": 2},
+                    "dataset.concurrent_reg": {"value": 4},
                     "dataset.global_split_set_control": {
                         "value": "False",
                         # "value": "True",
                     },  #!!!
                     "dataset.heldout_items_per_reg": {"value": 15},
-                    "dataset.td_prob": {"values": [0, 0.5, 1]},
-                    "dataset.n_back": {"value": 5},
+                    "dataset.td_prob": {"values": [0, 1]},
+                    "dataset.role_n_congruence": {"values": [0, 1]},
+                    "dataset.n_back": {"value": 4},
                     ################################
                     #                              #
                     #                              #
