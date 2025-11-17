@@ -219,7 +219,6 @@ class SIRDataset(GeneratedCachedDataset):
         the length of a trial sequence, the number of registers to use concurrently,
         and whether concurrently-used registers have a local structure to them (locality).
         """
-        super().__init__(config)
         # seed the random number generator
         # UPDATE: for held-out items per register, it would be nice to have a
         # random seed so that across different initializations of the dataset we
@@ -227,9 +226,13 @@ class SIRDataset(GeneratedCachedDataset):
         # actually challending w.r.t. the train and eval set)
         # since the generated data is shuffled at training time anyway, I am not worried about a lack of
         # randomness, so I'm changing this code to always use a random seed (default to 42 if none is provided)
+        # UPDATE 2025-11-17 this needed to happen BEFORE a call to `_heldout_setup`, but this code hunk
+        # was *underneath* super()(config), meaning the seed was being set AFTER the heldout setup.
+        # this is unfortunate; we won't be able to read into the heldout test set results for this round of expts.
         np.random.seed(self.config.seed or 42)
         random.seed(self.config.seed or 42)
 
+        super().__init__(config)
         self.tokenizer = tokenizer or SIRTokenizer.from_params(
             self.config.n_reg, self.config.n_items
         )
@@ -242,6 +245,8 @@ class SIRDataset(GeneratedCachedDataset):
 
         # instead of enumerating all possible combinations, simply sample as many
         # items as needed per register at the time of setting up that register
+        np.random.seed(self.config.seed or 42)
+        random.seed(self.config.seed or 42)
         self.reg_heldout_items = {
             i: tuple(
                 [
