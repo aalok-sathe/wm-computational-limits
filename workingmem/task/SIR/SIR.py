@@ -50,7 +50,7 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     heldout_items: int = 0
     """[DEPRECATED] number (absolute) of items to hold out. 
         these items will never appear in the train"""
-    heldout_items_per_reg: int = 3
+    heldout_items_per_reg: int = 15
     """number of items that will be held-out per register during training. these register-item
        pairings will never appear in the training set (when mode='train') or validation set 
        but will appear with high probability in the challenge set (when
@@ -69,12 +69,26 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     """probability of a 'same' outcome on a particular register. 
         varies independently of store/ignore instruction"""
     td_prob: float = 0.0
-    """temporal dependence probability: the probability with which a current 
-        trial uses the same role as a previous trial"""
+    """temporal dependence probability: (X_N ~ Uniform[0,1]) the probability with which 
+        the corrent ANS at the current trial depends on the item that occurred at a 
+        previous trial N* trials ago
+        *another interpretation of N is f(N), where f(N) is ignore-trial-aware (TODO; NotImplemented)
+        """
     n_back: typing.Union[int, None] = None
-    """specify n for n-backi-ness. must be >= 1 when provided. 
+    """specify N for n-back-i-ness. must be >= 1 when provided. 
         must be provided when temporal dependence (`td_prob`) > 0. 
-        does nothing when `td_prob` = 0."""
+        does nothing when `td_prob` = 0.
+        should be = `concurrent_reg` for `role_n_congruence` to be an
+        effective signal
+        *f(N), where f(N) is ignore-trial-aware (TODO; NotImplemented)
+        """
+    role_n_congruence: typing.Union[float, None] = 1.0
+    """role-N congruence probability: (Y ~ Uniform[0,1])
+        determines, at each trial generation step, whether the identity of
+        the role sampled at that trial will be congruent with N*, should 
+        the trial be an N-back trial.
+        *f(N), where f(N) is ignore-trial-aware (TODO; NotImplemented)
+    """
     global_split_set_control: typing.Union[bool, None] = None
     """(stricter) control condition where each item is assigned to a single role 
         (corollary: each role has a potentially small pool of items which are the 
@@ -128,8 +142,8 @@ class SIRTokenizer:
 
     @dataclass
     class symbols:
-        register: typing.Callable = lambda i: f"reg_{i}"
-        item: typing.Callable = lambda i: f"item_{i}"
+        register: typing.Callable = lambda i: f"reg_{int(i)}"
+        item: typing.Callable = lambda i: f"item_{int(i)}"
 
     @classmethod
     def from_params(
@@ -316,8 +330,11 @@ class SIRDataset(GeneratedCachedDataset):
         |    | 3. pick one register to operate on from the chosen registers
         |    |   [3'] with probability `td_prob`, this role will be the same
         |    |      as the one exactly `n_back` steps ago
-        |    |      [this has no bearing on what symbol is picked---with 50% prob
-        |    |       we still have different symbols]
+        |    |      [this has no bearing on what symbol is picked---with 50%
+        |    |       prob we still have different symbols]
+        |    |     if not all roles have been picked yet, pick from among those
+        |    |      that haven't yet made an appearance---this avoids the case
+        |    |      where we have role_n_congruence and n_back>0.
         |    |
         |    | 4. pick an instruction using ignore_prob
         |    |
@@ -474,43 +491,80 @@ class SIRDataset(GeneratedCachedDataset):
         # here is where we start maintaining the state of the registers (as in, the item they currently hold)
         reg_state: typing.Dict[int, int] = {i: -1 for i in regs_chosen}
 
-        this_trial_seq: typing.List[typing.List[str]] = []
+        this_trial_seq: typing.List[str] = []
+        this_reg_seq: typing.List[str] = []
+        this_item_seq: typing.List[str] = []
+        # ^ this stores just the sequence of roles (erstwhile "registers") [items]
+        # so we don't have to go through the trial symbols and backwards-count.
+        # this sequence should be automatically adjusted to `f(N)`, either including
+        # or leaving out roles corresponding to ignore trials, depending on policy.
+        # * current default is all roles are included, so only the absolute position
+        # (i.e., absolute N) matters
 
-        # repeat seq_len times:
+        def _pick_maybe_congruent_reg(i: int) -> int:
+            """reusable code hunk to probabilistically pick an N-congruent
+            role or otherwise uniformly random role, given the
+            current trial index `i`. returns the integer corresponding
+            to the role; not the role token (e.g. `reg_23`)"""
+            if (i < (self.config.n_back or 0)) or (
+                np.random.rand() > self.config.role_n_congruence
+            ):
+                # uniformly at random pick a register to operate on from
+                # among the chosen registers
+                # EXCEPT: exclude all registers that have occurred thus far
+                # so that we don't repeat registers before hitting all N,
+                # to facilitate N-back-ness for Role-N congruence
+                if i < (self.config.n_back or 0):
+                    _regs_chosen = set(regs_chosen).difference(this_reg_seq)
+                    return np.random.choice([*_regs_chosen], p=None).astype(int)
+                return np.random.choice(regs_chosen, p=None).astype(int)
+            else:
+                # use the same role that occurred f(N)* trials ago
+                # *f(N), if enabled, excludes ignore trials. whether or not
+                # this is the case, the registers from f(N) ago will always be
+                # tracked in the same data structure, `this_reg_seq`
+                this_reg_idx = this_reg_seq[-self.config.n_back]
+                return this_reg_idx
+                # return int(this_reg_token.split("_")[1])
+
+        # repeat `seq_len` times (each iteration of the loop generates a trial):
         for i in range(self.config.seq_len):
             # -----------------------------------------------------
             # step 3
             # -----------------------------------------------------
 
             # fork in the road!
-            # step [3a]
+            # sub-tree [3a]
             # ---------
-            # using the `td_prob` parameter, either pick the same role as `n_back` steps ago
-            # or, follow the familiar register-picking procedure (pick uniformly)
-            # constraint: in order for `n_back` to be meaningful when
-            # temporal dependence is 1, we cannot have `n_back` < `concurrent_reg`
-            # until we've accumulated at least `n_back` steps, we cannot do temporal dependence
-            if i < (self.config.n_back or 0) or (
-                np.random.rand() >= self.config.td_prob
-            ):
-                # pick one register to operate on from the chosen registers
-                # NOTE: in the future, to manipulate delayed recall from a certain register,
-                # we can use the `p=...` argument to np.random.choice to bias the selection
-                # away from a certain register
-                this_reg_idx = np.random.choice(regs_chosen, p=None).astype(int)
+            # with probability X_N* this trial is either an N*-back trial or NOT.
+            # the only thing this affects is how the same/diff label is decided.
+            # we will still sample item to respect `same_diff_prob`, but this sampling
+            # will be relative to N* trials ago rather than first having sampled a register
 
+            # OLD COMMENT:
+            # | using the `td_prob` parameter, either pick the same role as `n_back` steps ago
+            # | or, follow the familiar register-picking procedure (pick uniformly)
+            # | constraint: in order for `n_back` to be meaningful when
+            # | temporal dependence is 1, we cannot have `n_back` < `concurrent_reg`
+            # | until we've accumulated at least `n_back` steps, we cannot do
+            # | temporal dependence
+
+            n_back = None
+            # is this an N-back trial?
+            if (i < (self.config.n_back or 0)) or (
+                np.random.rand() >= self.config.td_prob
+            ):  # NOT an N-back trial
+                # 'correct' label (same/diff) is based on role identity
+                n_back = False
+                this_reg_idx = _pick_maybe_congruent_reg(i)
+
+            # N-back trial: 'correct' label (same/diff) is based on N trials ago
             else:
                 assert self.config.n_back is not None and self.config.n_back >= 1, (
-                    "`n_back` must be specified and >= 1 when `td_prob` > 0"
+                    "`config.n_back` must be specified and be >= 1 when `td_prob` != 0"
                 )
-                # assert (
-                #     self.config.n_back >= self.config.concurrent_reg
-                # ), "`n_back` must be at least as large as `concurrent_reg` to be meaningful"
-                # pick the same register as `n_back` steps ago
-                this_reg_token = this_trial_seq[
-                    -self.config.n_back * 4 + 1
-                ]  # +1 to get the reg token
-                this_reg_idx = int(this_reg_token.split("_")[1])
+                n_back = True
+                this_reg_idx = _pick_maybe_congruent_reg(i)
 
             # -----------------------------------------------------
             # step 4
@@ -534,28 +588,59 @@ class SIRDataset(GeneratedCachedDataset):
             # -----------------------------------------------------
             # pick an item using same_diff_prob, unless there was no previous item, in which case,
             # we must pick a new item and make the instruction be 'diff' by default
+
             if (
-                reg_state[this_reg_idx] == -1
-                or np.random.rand() > self.config.same_diff_prob
+                # ref back; no item stored in this reg yet
+                (not n_back and reg_state[this_reg_idx] == -1)
+                or
+                # n-back; fewer than n trials so far; can't compare with n-back
+                (n_back and (i < (self.config.n_back or 0)))
+                # we picked 'diff'
+                or (np.random.rand() > self.config.same_diff_prob)
             ):
-                # depending on whether we're using global_split_set_control, we either
-                # sample a new item from the register_item_pool mapping for this register
-                # or more broadly from items_chosen
-                this_trial_item_pool = (
-                    register_item_pool[this_reg_idx]
-                    if self.config.global_split_set_control
-                    else items_chosen
-                )
-                # NOTE this line by itself doesn't guarantee that the item is new
-                this_item = np.random.choice(this_trial_item_pool, p=None).astype(int)
-                # so we need this follow-up loop to keep drawing until it's new
-                while this_item == reg_state[this_reg_idx]:
+                # this chunk: diff!
+
+                # sample item uniformly at random and make it diff from N* trials back
+                if n_back:
+                    # NOTE there is (currently) no notion of split-set for N-back
+                    # though there could be---for example we could store certain
+                    # items only for odd or even indices
+
+                    # the below while-loop samples items until drawing one that's different from N ago
+                    this_item = np.random.choice(items_chosen, p=None).astype(int)
+                    while (i > self.config.n_back) and (
+                        this_item == this_item_seq[-self.config.n_back]
+                    ):
+                        this_item = np.random.choice(items_chosen, p=None).astype(int)
+
+                # sample item with respect to role and make it diff from what's
+                # stored with this role
+                else:
+                    # depending on whether we're using global_split_set_control, we either
+                    # sample a new item from the register_item_pool mapping for this register
+                    # or more broadly from items_chosen
+                    this_trial_item_pool = (
+                        register_item_pool[this_reg_idx]
+                        if self.config.global_split_set_control
+                        else items_chosen
+                    )
+                    # NOTE this line by itself doesn't guarantee that the item is new
                     this_item = np.random.choice(this_trial_item_pool, p=None).astype(
                         int
                     )
+                    # so we need this follow-up loop to keep drawing until it's new
+                    while this_item == reg_state[this_reg_idx]:
+                        this_item = np.random.choice(
+                            this_trial_item_pool, p=None
+                        ).astype(int)
                 this_label = diff
+            # enforce "same" condition
             else:
-                this_item = reg_state[this_reg_idx]
+                if n_back:  # item same as that from N trials ago
+                    this_item = this_item_seq[-self.config.n_back]
+                else:  # item same as that stored in the same role
+                    this_item = reg_state[this_reg_idx]
+
                 this_label = same
 
             # right here is where we assemble the current trial
@@ -566,6 +651,8 @@ class SIRDataset(GeneratedCachedDataset):
                 this_label,
             ]
             this_trial_seq.extend(this_trial)
+            this_reg_seq.append(this_reg_idx)
+            this_item_seq.append(this_item)
 
             # -----------------------------------------------------
             # step 6
