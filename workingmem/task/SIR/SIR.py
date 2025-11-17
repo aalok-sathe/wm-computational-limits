@@ -506,11 +506,17 @@ class SIRDataset(GeneratedCachedDataset):
             role or otherwise uniformly random role, given the
             current trial index `i`. returns the integer corresponding
             to the role; not the role token (e.g. `reg_23`)"""
-            if (i <= (self.config.n_back or 0)) or (
+            if (i < (self.config.n_back or 0)) or (
                 np.random.rand() > self.config.role_n_congruence
             ):
                 # uniformly at random pick a register to operate on from
                 # among the chosen registers
+                # EXCEPT: exclude all registers that have occurred thus far
+                # so that we don't repeat registers before hitting all N,
+                # to facilitate N-back-ness for Role-N congruence
+                if i < (self.config.n_back or 0):
+                    _regs_chosen = set(regs_chosen).difference(this_reg_seq)
+                    return np.random.choice([*_regs_chosen], p=None).astype(int)
                 return np.random.choice(regs_chosen, p=None).astype(int)
             else:
                 # use the same role that occurred f(N)* trials ago
@@ -545,7 +551,7 @@ class SIRDataset(GeneratedCachedDataset):
 
             n_back = None
             # is this an N-back trial?
-            if (i <= (self.config.n_back or 0)) or (
+            if (i < (self.config.n_back or 0)) or (
                 np.random.rand() >= self.config.td_prob
             ):  # NOT an N-back trial
                 # 'correct' label (same/diff) is based on role identity
@@ -588,7 +594,7 @@ class SIRDataset(GeneratedCachedDataset):
                 (not n_back and reg_state[this_reg_idx] == -1)
                 or
                 # n-back; fewer than n trials so far; can't compare with n-back
-                (n_back and (i <= (self.config.n_back or 0)))
+                (n_back and (i < (self.config.n_back or 0)))
                 # we picked 'diff'
                 or (np.random.rand() > self.config.same_diff_prob)
             ):
