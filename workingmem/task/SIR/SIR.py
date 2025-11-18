@@ -229,8 +229,8 @@ class SIRDataset(GeneratedCachedDataset):
         # UPDATE 2025-11-17 this needed to happen BEFORE a call to `_heldout_setup`, but this code hunk
         # was *underneath* super()(config), meaning the seed was being set AFTER the heldout setup.
         # this is unfortunate; we won't be able to read into the heldout test set results for this round of expts.
-        np.random.seed(self.config.seed or 42)
-        random.seed(self.config.seed or 42)
+        np.random.seed(config.seed or 42)
+        random.seed(config.seed or 42)
 
         super().__init__(config)
         self.tokenizer = tokenizer or SIRTokenizer.from_params(
