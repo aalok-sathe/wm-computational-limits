@@ -4,7 +4,7 @@ import workingmem.model
 
 
 # find model with best and worst val_acc
-def best_worst(models_dir: Path, top_n: int = 1):
+def best_worst(models_dir: Path, top_n: int = 1, verbose=False):
     # best = None
     # worst = None
     # best_acc = 0
@@ -30,10 +30,15 @@ def best_worst(models_dir: Path, top_n: int = 1):
     # sort models by val_acc
     models.sort(key=lambda x: x[1], reverse=True)
 
-    print(f"Best models: {models[:top_n]}")
-    print(f"Worst models: {models[-top_n:]}")
+    if verbose:
+        print(f"Best models: {models[:top_n]}")
+        print(f"Worst models: {models[-top_n:]}")
     for i in range(top_n):
+        if i >= len(models):
+            break
         yield workingmem.model.ModelConfig(models[i][0])
     for i in range(top_n):
+        if i >= len(models):
+            break
         yield workingmem.model.ModelConfig(models[-1 - i][0])
     # return map(workingmem.model.ModelConfig, [best, worst])
