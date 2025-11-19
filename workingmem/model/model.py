@@ -166,7 +166,9 @@ class ModelWrapper(ABC):
             self.model = HookedTransformer(
                 HookedTransformerConfig(
                     # d_head=config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
-                    config.positional_embedding_type or "standard",
+                    positional_embedding_type=(
+                        config.positional_embedding_type or "standard"
+                    ),
                     **{
                         k: v
                         for k, v in dataclasses.asdict(config).items()
@@ -238,7 +240,9 @@ class ModelWrapper(ABC):
         self.model = HookedTransformer(
             HookedTransformerConfig(
                 # d_head=_config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
-                _config.positional_embedding_type or "standard",
+                positional_embedding_type=(
+                    _config.positional_embedding_type or "standard"
+                ),
                 **{
                     k: v
                     for k, v in dataclasses.asdict(_config).items()
