@@ -376,6 +376,7 @@ if __name__ == "__main__":
                 from_config_params = yaml.load(f, Loader=yaml.FullLoader)
             # for each of the variables (keys) in this config, we want to do
             # a product of all possible values each variable takes
+            sweep_records = []
             sweep_configs = []
             from itertools import product
 
@@ -403,8 +404,18 @@ if __name__ == "__main__":
                     + bash_template
                     + "\n"
                 )
+                sweep_records += [
+                    {
+                        k: v
+                        for k, v in zip(keys, vals)
+                        if k in this_sweep_config["parameters"]
+                    }
+                    | {"sweep_id": sweep_id}
+                ]
 
             print(*sweep_configs, sep="")
+            with open(str(config.wandb.from_config) + "_sweep_dict.yaml", "w") as f:
+                yaml.dump(sweep_records, f)
 
         else:
             sweep_id = wandb.sweep(sweep_config, project=config.wandb.project_name)
