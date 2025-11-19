@@ -11,6 +11,7 @@ import random
 from pathlib import Path
 from collections import defaultdict
 import os
+from datetime import datetime
 
 # 3rd party packages
 import tyro
@@ -39,7 +40,7 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-7.3.1"
+    project_name: str = "wm-comp-limit-7.3.2"
     # method: str = "bayes"  # use this for a hparam sweep
     method: str = "grid"  # use this once hparams are fixed
     metric: dict = dataclasses.field(
@@ -413,8 +414,11 @@ if __name__ == "__main__":
                     | {"sweep_id": sweep_id}
                 ]
 
+            timestamp = datetime.now().strftime("%y-%m-%d")
             print(*sweep_configs, sep="")
-            with open(str(config.wandb.from_config) + "_sweep_dict.yaml", "w") as f:
+            with open(
+                f"{config.wandb.from_config}_{timestamp}_sweep_dict.yaml", "w"
+            ) as f:
                 yaml.dump(sweep_records, f)
 
         else:
