@@ -52,7 +52,9 @@ class ModelConfig:
     seed: typing.Union[int, str, None] = (
         None  # seeds passed as str must be convertible to int, e.g. "42" or "1234"
     )
-    positional_embedding_type: str = "rotary"  # type of positional embedding to use, e.g. "rotary", "standard", "nope"
+    # type of positional embedding to use, e.g. "rotary", "standard", None
+    # NOTE! None corresponds to NOPE (no positional embeddings). use with caution!
+    positional_embedding_type: typing.Union[str, None] = None
 
     ################################################
     # DEPRECATED: to remove this chunk at some point
@@ -164,24 +166,20 @@ class ModelWrapper(ABC):
             self.model = HookedTransformer(
                 HookedTransformerConfig(
                     # d_head=config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
+                    positional_embedding_type=(
+                        config.positional_embedding_type or "standard"
+                    ),
                     **{
                         k: v
                         for k, v in dataclasses.asdict(config).items()
-                        if k != "from_pretrained"
+                        if k not in ("from_pretrained", "positional_embedding_type")
                     },
                 )
             )
 
-            # separately load the embeddings using torch.nn.Embedding and use the `scale_grad_by_freq`
-            # option from the config to scale the gradients by the frequency of the tokens within a minibatch
-
-            # TODO
-            # self.model.embed = torch.nn.Embedding(
-            #     num_embeddings=config.d_vocab,
-            #     embedding_dim=config.d_model,
-            #     padding_idx=0,
-            #     scale_grad_by_freq=config.scale_grad_by_freq,
-            # )
+            # only makes sense to deactivate positional embeddings at initialization
+            if config.positional_embedding_type is None:
+                self._deactivate_positional_embeddings()
 
         else:
             # if we're asked to load from a pretrained checkpoint, we load the model
@@ -242,10 +240,13 @@ class ModelWrapper(ABC):
         self.model = HookedTransformer(
             HookedTransformerConfig(
                 # d_head=_config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
+                positional_embedding_type=(
+                    _config.positional_embedding_type or "standard"
+                ),
                 **{
                     k: v
                     for k, v in dataclasses.asdict(_config).items()
-                    if k != "from_pretrained"
+                    if k not in ("from_pretrained", "positional_embedding_type")
                 },
             )
         )
@@ -259,6 +260,12 @@ class ModelWrapper(ABC):
             fold_ln=False,
             # refactor_factored_attn_matrices=True,
         )
+
+        # if checkpoint to be loaded has no positional embedding, set the positional embedding weight matrix to
+        # zeroes and set grad off.
+        if _config.positional_embedding_type is None:
+            self._deactivate_positional_embeddings()
+
         logger.info(f"finished loading model state dict from {_state_dict_path}")
 
     def save_checkpoint(
@@ -320,6 +327,19 @@ class ModelWrapper(ABC):
             yaml.dump([*map(convert_dataclass_if_needed, self.history)], f)
 
         logger.info(f"saved model checkpoint to {checkpoint_path}")
+
+    def _deactivate_positional_embeddings(self) -> None:
+        """
+        Deactivates the positional embedding in the model by setting its weights to zero
+        and freezing the gradient updates for the positional embedding parameters.
+        This method modifies the `W_pos` attribute of the `pos_embed` module in the model:
+        - sets all values in `W_pos` to 0.0.
+        - disables gradient computation for `W_pos` by setting `requires_grad` to False.
+        source: https://colab.research.google.com/github/TransformerLensOrg/TransformerLens/blob/main/demos/No_Position_Experiment.ipynb#scrollTo=fVWrVHo9y0T2
+        """
+
+        self.model.pos_embed.W_pos.data[:] = 0.0
+        self.model.pos_embed.W_pos.requires_grad = False
 
     def set_embeddings(self, embeddings: typing.Union[np.ndarray, torch.Tensor]):
         """
