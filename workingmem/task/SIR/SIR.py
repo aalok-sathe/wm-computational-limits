@@ -657,10 +657,6 @@ class SIRDataset(GeneratedCachedDataset):
             ]
             this_trial_seq.extend(this_trial)
 
-            if this_instr == store:
-                this_reg_seq.append(this_reg_idx)
-                this_item_seq.append(this_item)
-
             # -----------------------------------------------------
             # step 6
             # -----------------------------------------------------
@@ -668,6 +664,16 @@ class SIRDataset(GeneratedCachedDataset):
             if this_instr != ignore:
                 # doesn't matter if it's the same or a new item; we update
                 reg_state[this_reg_idx] = this_item
+
+                # to be ignore-aware in our treatment of (i) N-back and (ii) Role-N
+                # correlations, we will only store the item and also the role
+                # identity when the instruction is 'store'. this way, role identity
+                # corresponds to N adjusted for skipping ignore trials.
+                # since the same/diff label is determined based on the contents of the
+                # lists referenced below, doing the N-back task will mean looking N-back
+                # in these lists, which the models will somehow have to learn to maintain
+                this_reg_seq.append(this_reg_idx)
+                this_item_seq.append(this_item)
 
         return {
             "sequence": " ".join(this_trial_seq),
