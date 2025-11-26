@@ -613,7 +613,7 @@ class SIRDataset(GeneratedCachedDataset):
 
                     # the below while-loop samples items until drawing one that's different from N ago
                     this_item = np.random.choice(items_chosen, p=None).astype(int)
-                    while (len(this_item_seq) > self.config.n_back) and (
+                    while (len(this_item_seq) >= self.config.n_back) and (
                         this_item == this_item_seq[-self.config.n_back]
                     ):
                         this_item = np.random.choice(items_chosen, p=None).astype(int)
