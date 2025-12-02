@@ -12,7 +12,7 @@
 ##SBATCH -p cs-superlab-gcondo --gres=gpu:1 --account=cs-superlab-gcondo
 ##SBATCH -p gpu --gres=gpu:1 # no priority
 
-#SBATCH -a 1-9%20
+#SBATCH -a 1-20%20
 #SBATCH -t 2-00:00:00
 ##SBATCH -t 1-00:00:00
 
@@ -51,3 +51,69 @@ sleep $((RANDOM % 30 + 1))
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/ck9pi0go
 # dataset.td_prob=1 dataset.role_n_congruence=1 dataset.n_back=4 dataset.concurrent_reg=4
 # python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/w03izn1c
+
+# -----
+# dataset.td_prob=0 dataset.role_n_congruence=0.5 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/xgl4bz2v
+# -----
+# dataset.td_prob=0 dataset.role_n_congruence=0.6 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/8cn96ij0
+# dataset.td_prob=0 dataset.role_n_congruence=0.7 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/2y7n1di3
+# dataset.td_prob=0 dataset.role_n_congruence=0.8 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/wj414e29
+# dataset.td_prob=0 dataset.role_n_congruence=0.9 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/hzfdqof0
+# -----
+# dataset.td_prob=0 dataset.role_n_congruence=1 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.1/7xf2lt09
+
+
+# ------ NO POSITIONAL EMBEDDINGS!
+
+# dataset.td_prob=0 dataset.role_n_congruence=0 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/u83o3qw7
+# dataset.td_prob=0 dataset.role_n_congruence=0.25 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/7tmqmeu2
+# dataset.td_prob=0 dataset.role_n_congruence=0.5 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/967wqail
+# dataset.td_prob=0 dataset.role_n_congruence=0.7 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/qvelzjzq
+# dataset.td_prob=0 dataset.role_n_congruence=0.8 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/0sh645ly
+# dataset.td_prob=0 dataset.role_n_congruence=0.9 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/g8gux4um
+# dataset.td_prob=0 dataset.role_n_congruence=0.95 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/11ibquvt
+# dataset.td_prob=0 dataset.role_n_congruence=1 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/dxuufdrs
+
+# dataset.td_prob=1 dataset.role_n_congruence=0 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/4nn7p2va
+# dataset.td_prob=1 dataset.role_n_congruence=0.25 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/h3gppajd
+# dataset.td_prob=1 dataset.role_n_congruence=0.5 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/4anfot6j
+# dataset.td_prob=1 dataset.role_n_congruence=0.7 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/y9024pym
+# dataset.td_prob=1 dataset.role_n_congruence=0.8 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/jkejkuvi
+# dataset.td_prob=1 dataset.role_n_congruence=0.9 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/gp1k1ob7
+# dataset.td_prob=1 dataset.role_n_congruence=0.95 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/2dnxagjz
+# dataset.td_prob=1 dataset.role_n_congruence=1 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2/hu3vslvz
+
+
+# ------------ hparam sweep for NoPE
+# dataset.td_prob=0 dataset.role_n_congruence=0 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2a0/0uayie2m
+# dataset.td_prob=1 dataset.role_n_congruence=0 dataset.n_back=4 dataset.concurrent_reg=4
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2a0/veme6eqt
+
+# ------------ hparam sweep for NoPE but with `dataset.concurrent_reg=2`
+# dataset.td_prob=0 dataset.role_n_congruence=0 dataset.n_back=2 dataset.concurrent_reg=2 dataset.seq_len=100
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2a0/aqznrnfg
+# dataset.td_prob=1 dataset.role_n_congruence=0 dataset.n_back=2 dataset.concurrent_reg=2 dataset.seq_len=100
+# python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/wm-comp-limit-7.3.2a0/z3d33pg6

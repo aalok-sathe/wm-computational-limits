@@ -511,7 +511,7 @@ class SIRDataset(GeneratedCachedDataset):
             role or otherwise uniformly random role, given the
             current trial index `i`. returns the integer corresponding
             to the role; not the role token (e.g. `reg_23`)"""
-            if (i < (self.config.n_back or 0)) or (
+            if (len(this_item_seq) < (self.config.n_back or 0)) or (
                 np.random.rand() > self.config.role_n_congruence
             ):
                 # uniformly at random pick a register to operate on from
@@ -519,7 +519,7 @@ class SIRDataset(GeneratedCachedDataset):
                 # EXCEPT: exclude all registers that have occurred thus far
                 # so that we don't repeat registers before hitting all N,
                 # to facilitate N-back-ness for Role-N congruence
-                if i < (self.config.n_back or 0):
+                if len(this_item_seq) < (self.config.n_back or 0):
                     _regs_chosen = set(regs_chosen).difference(this_reg_seq)
                     return np.random.choice([*_regs_chosen], p=None).astype(int)
                 return np.random.choice(regs_chosen, p=None).astype(int)
@@ -556,7 +556,7 @@ class SIRDataset(GeneratedCachedDataset):
 
             n_back = None
             # is this an N-back trial?
-            if (i < (self.config.n_back or 0)) or (
+            if (len(this_item_seq) < (self.config.n_back or 0)) or (
                 np.random.rand() >= self.config.td_prob
             ):  # NOT an N-back trial
                 # 'correct' label (same/diff) is based on role identity
@@ -598,8 +598,8 @@ class SIRDataset(GeneratedCachedDataset):
                 # ref back; no item stored in this reg yet
                 (not n_back and reg_state[this_reg_idx] == -1)
                 or
-                # n-back; fewer than n trials so far; can't compare with n-back
-                (n_back and (i < (self.config.n_back or 0)))
+                # n-back; fewer than n non-ignore trials so far; can't compare with n-back
+                (n_back and (len(this_item_seq) < (self.config.n_back or 0)))
                 # we picked 'diff'
                 or (np.random.rand() > self.config.same_diff_prob)
             ):
@@ -613,7 +613,7 @@ class SIRDataset(GeneratedCachedDataset):
 
                     # the below while-loop samples items until drawing one that's different from N ago
                     this_item = np.random.choice(items_chosen, p=None).astype(int)
-                    while (i > self.config.n_back) and (
+                    while (len(this_item_seq) >= self.config.n_back) and (
                         this_item == this_item_seq[-self.config.n_back]
                     ):
                         this_item = np.random.choice(items_chosen, p=None).astype(int)
@@ -656,8 +656,6 @@ class SIRDataset(GeneratedCachedDataset):
                 this_label,
             ]
             this_trial_seq.extend(this_trial)
-            this_reg_seq.append(this_reg_idx)
-            this_item_seq.append(this_item)
 
             # -----------------------------------------------------
             # step 6
@@ -666,6 +664,16 @@ class SIRDataset(GeneratedCachedDataset):
             if this_instr != ignore:
                 # doesn't matter if it's the same or a new item; we update
                 reg_state[this_reg_idx] = this_item
+
+                # to be ignore-aware in our treatment of (i) N-back and (ii) Role-N
+                # correlations, we will only store the item and also the role
+                # identity when the instruction is 'store'. this way, role identity
+                # corresponds to N adjusted for skipping ignore trials.
+                # since the same/diff label is determined based on the contents of the
+                # lists referenced below, doing the N-back task will mean looking N-back
+                # in these lists, which the models will somehow have to learn to maintain
+                this_reg_seq.append(this_reg_idx)
+                this_item_seq.append(this_item)
 
         return {
             "sequence": " ".join(this_trial_seq),
