@@ -40,7 +40,7 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-7.3.2"
+    project_name: str = "wm-comp-limit-7.3.2c0"
     # method: str = "bayes"  # use this for a hparam sweep
     method: str = "grid"  # use this once hparams are fixed
     metric: dict = dataclasses.field(
@@ -151,7 +151,7 @@ def main(config: MainConfig):
 
         if config.filter_by_accuracy:
             # filter models by the accuracy recorded in their history
-            def filter_by_accuracy(m: Path, threshold=0.99) -> bool:
+            def filter_by_accuracy(m: Path, threshold=0.95) -> bool:
                 with open(m / "history.yaml", "r") as f:
                     history = yaml.load(f, Loader=yaml.FullLoader)
                 return history[-1]["eval_acc"] >= threshold
@@ -236,12 +236,6 @@ def main(config: MainConfig):
             logger.error(
                 f"could not train the model with batch size {config.trainer.batch_size} even after reducing it to 16, exiting"
             )
-        # model.train(
-        #     train_dataset,
-        #     config.trainer,
-        #     eval_dataset=eval_dataset,
-        #     test_dataset=test_dataset,
-        # )
 
         logger.info("Finished.")
 
@@ -282,7 +276,7 @@ if __name__ == "__main__":
             "model.seed": {
                 "values": [*map(str, range(42, 42 + 15))]
             },  # 15 random seeds; non-overlapping range with the seeds used for hparam sweep above
-            "trainer.learning_rate": {"value": 5e-4},
+            "trainer.learning_rate": {"value": 2.2e-4},
         }
         ############
 
@@ -292,6 +286,7 @@ if __name__ == "__main__":
             else fixed_experimental_params
         )
 
+        # additional default params to use for both a hparam sweep or regular experiments
         sweep_config.update(
             {
                 "parameters": {
@@ -301,7 +296,7 @@ if __name__ == "__main__":
                     # NOTE don't forget to change 'bayes' to 'grid' following initial hparam sweep
                     ################################
                     # sparsity of feedback (loss) over training
-                    "trainer.sparsity": {"value": 0.0},  # !!!!! change!
+                    "trainer.sparsity": {"value": 0.0},
                     "dataset.concurrent_reg": {"value": 4},
                     "dataset.global_split_set_control": {
                         "value": "False",
@@ -331,7 +326,7 @@ if __name__ == "__main__":
                     },  # !
                     # "filter_by_accuracy": {"value": "True"}, # only relevant when `from_pretrained` is provided
                     "model.n_layers": {"value": 2},
-                    "model.positional_embedding_type": {"value": None},
+                    "model.positional_embedding_type": {"value": "rotary"},
                     ################################
                     # trainer parameters
                     ################################
@@ -345,7 +340,7 @@ if __name__ == "__main__":
                     ################################
                     # dataset parameters
                     ################################
-                    "dataset.seq_len": {"value": 300},
+                    "dataset.seq_len": {"value": 200},
                     "dataset.n_reg": {"value": 50},
                     "dataset.n_train": {"value": 100_000},
                     # this was changed from 4 to 128 to accommodate split set control for

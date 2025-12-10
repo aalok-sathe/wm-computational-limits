@@ -105,7 +105,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                             f"waiting {seconds_waiting / 60} min for {train_path} to be generated"
                         )
                     seconds_waiting += 1
-                    if seconds_waiting > 10 * 60:
+                    if seconds_waiting > 15 * 60:
                         # timeout
                         logger.warning(
                             f"timed out waiting {seconds_waiting / 60} min for {train_path} to be generated"
