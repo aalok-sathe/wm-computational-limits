@@ -22,7 +22,12 @@ from dacite import from_dict
 from workingmem.model import (
     ModelWrapper,
     ModelConfig,
+    # TransformerConfig,
+    # RNNConfig,
     TrainingConfig,
+    TransformerModelWrapper,
+    RNNModelWrapper,
+    LSTMModelWrapper,
 )
 from workingmem.task import SIRDataset, SIRConfig
 from workingmem.utils import print_gpu_mem
@@ -182,8 +187,18 @@ def main(config: MainConfig):
 
     # once the `from_pretrained` path is set to a not-None value, we can just use the regular way to
     # load the model, since the `ModelWrapper` class will take care of loading the model from checkpoint
-    model = ModelWrapper(config.model)
+    # check moodel class to instantiate the correct model wrapper
+    # model = ModelWrapper(config.model)
+    if config.model.model_class == "transformer":
+        model = TransformerModelWrapper(config.model)
+    elif config.model.model_class == "rnn":
+        model = RNNModelWrapper(config.model)
+    elif config.model.model_class == "lstm":
+        model = LSTMModelWrapper(config.model)
+    else:
+        raise ValueError(f"unknown model class: {config.model.model_class}")
 
+    logger.info(f"{config.model.model_class} model initialized.")
     logger.info(
         f"model initialized with {config.model.n_layers} layers, {config.model.n_heads} heads, "
         f"{config.model.d_model} d_model, {config.model.d_vocab} d_vocab, "
@@ -241,7 +256,7 @@ def main(config: MainConfig):
 
 
 if __name__ == "__main__":
-    config = tyro.cli(MainConfig)
+    config = tyro.cli(MainConfig, config=(tyro.conf.CascadeSubcommandArgs,))
 
     # case 1 is we create a new sweep
     if config.wandb.create_sweep:
