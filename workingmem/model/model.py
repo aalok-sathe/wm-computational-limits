@@ -78,7 +78,7 @@ class ModelWrapper(ABC):
             # we should make sure the user is aware of this.
             logger.warning(f"loading model from checkpoint: {config.from_pretrained}")
             logger.warning(
-                f"any additional options passed to `ModelConfig` will be ingored!\n\t{config}"
+                f"any additional options passed to `ModelConfig` will be ignored!\n\t{config}"
             )
             self.load_checkpoint(config.from_pretrained)
 
