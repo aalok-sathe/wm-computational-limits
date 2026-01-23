@@ -80,7 +80,7 @@ class ModelWrapper(ABC):
             # we should make sure the user is aware of this.
             logger.warning(f"loading model from checkpoint: {config.from_pretrained}")
             logger.warning(
-                f"any additional options passed to `ModelConfig` will be ingored!\n\t{config}"
+                f"any additional options passed to `ModelConfig` will be ignored!\n\t{config}"
             )
             self.load_checkpoint(config.from_pretrained)
 
@@ -800,14 +800,19 @@ class TransformerModelWrapper(ModelWrapper):
         super().__init__(config)
 
     def _init_model(self, config: ModelConfig):
+        # Only pass fields that HookedTransformerConfig actually accepts, and
+        # continue to exclude fields that are not constructor arguments.
+        config_dict = dataclasses.asdict(config)
+        allowed_fields = HookedTransformerConfig.__dataclass_fields__.keys()
+        hooked_config_kwargs = {
+            k: v
+            for k, v in config_dict.items()
+            if k in allowed_fields and k not in ("from_pretrained", "positional_embedding_type")
+        }
         hookedtfm_config = HookedTransformerConfig(
             # d_head=config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
             positional_embedding_type=(config.positional_embedding_type or "standard"),
-            **{
-                k: v
-                for k, v in dataclasses.asdict(config).items()
-                if k not in ("from_pretrained", "positional_embedding_type")
-            },
+            **hooked_config_kwargs,
         )
         self.model = HookedTransformer(hookedtfm_config)
 

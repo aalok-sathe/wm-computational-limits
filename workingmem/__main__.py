@@ -187,7 +187,7 @@ def main(config: MainConfig):
 
     # once the `from_pretrained` path is set to a not-None value, we can just use the regular way to
     # load the model, since the `ModelWrapper` class will take care of loading the model from checkpoint
-    # check moodel class to instantiate the correct model wrapper
+    # check model class to instantiate the correct model wrapper
     # model = ModelWrapper(config.model)
     if config.model.model_class == "transformer":
         model = TransformerModelWrapper(config.model)

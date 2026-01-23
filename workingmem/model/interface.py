@@ -28,7 +28,7 @@ class ModelConfig:
     specific model architectures, such as transformer or RNN.
     """
 
-    model_class: str  # "transformer" or "rnn" or "lstm" [required]
+    model_class: str = "transformer"  # "transformer" or "rnn" or "lstm"
     from_pretrained: typing.Union[str, None] = None
     """`from_pretrained` is a path to a directory containing the model checkpoints and config.yaml.
         typically:
