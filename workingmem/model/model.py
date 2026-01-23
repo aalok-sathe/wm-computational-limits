@@ -46,7 +46,9 @@ class ModelWrapper(ABC):
     def _init_model(self, config: ModelConfig):
         pass
 
-    def load_state_dict(self, state_dict: typing.Dict[str, torch.Tensor]):
+    def load_state_dict(
+        self, state_dict: typing.Dict[str, torch.Tensor], config: ModelConfig = None
+    ):
         """
         simply make a call to the underlying model's `load_state_dict` method
         as provided by any standard pytorch model except in the case of a
