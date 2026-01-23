@@ -1,7 +1,7 @@
 # stdlib
 import dataclasses
 import typing
-from abc import ABC
+from abc import ABC, abstractmethod
 from pathlib import Path
 import logging
 import yaml
@@ -17,127 +17,19 @@ import wandb
 
 # local
 from workingmem.task.interface import GeneratedCachedDataset
+from workingmem.model.interface import (
+    AbstractPytorchModel,
+    TrainingConfig,
+    TrainingHistoryEntry,
+    ModelConfig,
+    # TransformerConfig,
+    # RNNConfig,
+    compute_masked_loss,
+)
+
 
 logger = logging.getLogger("workingmem")
 logger.setLevel(logging.DEBUG)
-
-
-@dataclasses.dataclass
-class ModelConfig:
-    """
-    holds configuration parameters for the model
-    aim: have some correspondence with the `HookedTransformerConfig` class
-
-    """
-
-    from_pretrained: typing.Union[str, None] = None
-    """`from_pretrained` is a path to a directory containing the model checkpoints and config.yaml.
-        typically:
-        +-- config.yaml
-        +-- history.yaml
-        +-- checkpoints/{epoch}.pth, ...
-        +-- best_model.pth 
-    if supplied, any ptions in the existing `ModelConfig` are ignored.  model is initialized using the config in the config.yaml file, and the state_dict is loaded from the *.pth file.  
-    """
-    attn_only: bool = True
-    n_layers: int = 2
-    n_heads: int = 2
-    n_ctx: int = 1205  # this should be set so that it is longer than the longest trial sequence length we expect to use with the model. i.e., 4 * seq_len + change. for 300, we need at least 1201.
-    d_model: int = 256  # dimensionality of the residual stream and embeddings
-    d_head: int = 128
-    d_mlp: int = 0
-    # act_fn: str = "relu"  # from HookedTransformerConfig: "must be set unless using an attn-only model."
-    d_vocab: int = None  # vocab dim is determined by the tokenizer
-    init_weights: bool = True
-    seed: typing.Union[int, str, None] = (
-        None  # seeds passed as str must be convertible to int, e.g. "42" or "1234"
-    )
-    # type of positional embedding to use, e.g. "rotary", "standard", None
-    # NOTE! None corresponds to NOPE (no positional embeddings). use with caution!
-    positional_embedding_type: typing.Union[str, None] = None
-
-    ################################################
-    # DEPRECATED: to remove this chunk at some point
-    # NOTE: EDIT 2025-06-05: we set the head dim to be the same as the model dimensionality irrespective of the number of heads.
-    # so, the number of parameters will grow faster now
-    # @property
-    # def d_head(self) -> int:
-    #     """calculate the dimensionality of the attention heads in the model as per `d_model` and `n_heads`"""
-    #     return self.d_model
-    #
-    #     d_head = self.d_model // self.n_heads
-    #     if d_head * self.n_heads == self.d_model:
-    #         return d_head
-    #     raise ValueError(
-    #         f"the model dimensionality {self.d_model} is not divisible by the number of heads "
-    #         f"{self.n_heads} leading to an incompatible head dimensionality {d_head}"
-    #     )
-    ################################################
-
-
-@dataclasses.dataclass
-class TrainingConfig:
-    freeze_embeddings: bool = None
-    epochs: int = 60
-    optimizer: str = "adamw"
-    learning_rate: float = 4e-4
-    weight_decay: float = 0.0
-    sparsity: float = 0.0
-
-    # this is where checkpoints are saved, if supplied.
-    # if available, a wandb.run.sweep_id AND a model random seed will be appended
-    # to the checkpoint directory name.
-    # e.g. `model_checkpoints/{sweep_id}/{run_name}/`
-    checkpoint_dir: typing.Union[str, None] = "model_checkpoints/"
-    batch_size: int = 128
-    seed: int = None
-
-    logging_strategy: str = "epoch"  # log every X epochs or X steps?
-    logging_steps: int = 1  # log every X epochs/steps
-    log_predictions: typing.Union[bool, None] = None
-
-    # log X many times per epoch: the # of steps to log after is determined
-    # by the dataset length and batch size
-    logging_steps_per_epoch: int = 5
-    # 'best' saves a checkpoint each time we see a drop in validation loss, named 'best_model.pth'
-    # 'epoch' saves a checkpoint at the end of each epoch named 'epoch_{epoch}.pth' in a subdirectory called 'checkpoints/'
-    save_strategy: typing.Literal["best", "epoch"] = "best"
-    # if strategy is 'epoch', then we save every X epochs determined by `save_steps`
-    save_steps: int = None
-
-    do_test: bool = True  # evaluate the model on the test set after training?
-
-    mask_answer_tokens: bool = None  # whether we train the model using answer tokens in the input sequence or not
-
-
-@dataclasses.dataclass
-class TrainingHistoryEntry:
-    """
-    represents one entry in model training history. provides appropriate fields that
-    should be populated when recording history
-    """
-
-    # basic info
-    dataset_name: str
-    dataset_path: str
-
-    # training args
-    epoch: int  # remember to update this (this is the epochs trained so far)
-    batch_size: int
-    sparsity: float
-    learning_rate: float
-    weight_decay: float
-    sweep_id: str
-    run_name: str
-    run_url: str
-    checkpoint_dir: str  # this is the directory where the model checkpoint is saved
-    freeze_embeddings: bool
-
-    # outcomes
-    eval_acc: float
-    eval_macro_acc: float
-    test_acc: float
-    test_macro_acc: float
 
 
 class ModelWrapper(ABC):
@@ -146,9 +38,24 @@ class ModelWrapper(ABC):
     the model(wrapper) is now responsible to train itself, and to evaluate itself on a supplied dataset.
     """
 
-    model: typing.Union[HookedTransformer, torch.nn.Transformer]
-    # we want to document the unique identification of the dataset a model has been trained on,
+    model: AbstractPytorchModel
+    # we want to document the unique identification of the dataset a model has been trained on
     history: typing.List[typing.Union[TrainingHistoryEntry, typing.Dict]] = None
+
+    @abstractmethod
+    def _init_model(self, config: ModelConfig):
+        pass
+
+    def load_state_dict(
+        self, state_dict: typing.Dict[str, torch.Tensor], config: ModelConfig = None
+    ):
+        """
+        simply make a call to the underlying model's `load_state_dict` method
+        as provided by any standard pytorch model except in the case of a
+        HookedTransformer, where we have to call the
+        `load_and_process_state_dict` method
+        """
+        self.model.load_state_dict(state_dict)
 
     def __init__(self, config: ModelConfig):
         self.config = config
@@ -163,23 +70,8 @@ class ModelWrapper(ABC):
                 torch.manual_seed(int(config.seed))
                 np.random.seed(int(config.seed))
 
-            self.model = HookedTransformer(
-                HookedTransformerConfig(
-                    # d_head=config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
-                    positional_embedding_type=(
-                        config.positional_embedding_type or "standard"
-                    ),
-                    **{
-                        k: v
-                        for k, v in dataclasses.asdict(config).items()
-                        if k not in ("from_pretrained", "positional_embedding_type")
-                    },
-                )
-            )
-
-            # only makes sense to deactivate positional embeddings at initialization
-            if config.positional_embedding_type is None:
-                self._deactivate_positional_embeddings()
+            # we call the abstract method _init_model which should be implemented in subclasses
+            self._init_model(config)
 
         else:
             # if we're asked to load from a pretrained checkpoint, we load the model
@@ -188,7 +80,7 @@ class ModelWrapper(ABC):
             # we should make sure the user is aware of this.
             logger.warning(f"loading model from checkpoint: {config.from_pretrained}")
             logger.warning(
-                f"any additional options passed via `ModelConfig` will be ingored!\n\t{config}"
+                f"any additional options passed to `ModelConfig` will be ignored!\n\t{config}"
             )
             self.load_checkpoint(config.from_pretrained)
 
@@ -212,6 +104,7 @@ class ModelWrapper(ABC):
         # 1. load config
         with open(checkpoint_dir / "config.yaml", "r") as f:
             _config = ModelConfig(**yaml.load(f, Loader=yaml.FullLoader))
+            self.config = _config  # NOTE: added 1/15/2026; seems that we were not updating self.config here before?
             # update the config with the checkpoint dir as the new `from_pretrained` path
             # NOTE: this is unnecessary if this method was called from __init__ since the config
             # would have been set to the checkpoint dir already---that is the preferred way.
@@ -225,7 +118,9 @@ class ModelWrapper(ABC):
         # 3. load model
         # 3.1 load the state dict
 
-        # NOTE: may be worth supporting state dicts other than `best_model.pth`,
+        ################################################################
+        # TODO: may be worth supporting state dicts other than `best_model.pth`,
+        ################################################################
         # e.g. `epoch_{epoch}.pth` for taking a model trained for X epochs
         _state_dict_path = list(checkpoint_dir.glob("*.pth"))
         if len(_state_dict_path) != 1:
@@ -237,34 +132,11 @@ class ModelWrapper(ABC):
 
         # 3.2 initialize a model instance just based on the config (this will have
         # random weights, but we are about to overwrite them)
-        self.model = HookedTransformer(
-            HookedTransformerConfig(
-                # d_head=_config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
-                positional_embedding_type=(
-                    _config.positional_embedding_type or "standard"
-                ),
-                **{
-                    k: v
-                    for k, v in dataclasses.asdict(_config).items()
-                    if k not in ("from_pretrained", "positional_embedding_type")
-                },
-            )
-        )
+        self._init_model(_config)
 
         # 3.3 load the state dict into the model: this should overwrite the weights
         _state_dict = torch.load(_state_dict_path, map_location=self.device)
-        self.model.load_and_process_state_dict(
-            _state_dict,
-            center_unembed=True,  # this shifts the unembedding matrix weights to be centered around 0
-            center_writing_weights=True,  # this shifts the weights written to residual stream to be centered around 0
-            fold_ln=False,
-            # refactor_factored_attn_matrices=True,
-        )
-
-        # if checkpoint to be loaded has no positional embedding, set the positional embedding weight matrix to
-        # zeroes and set grad off.
-        if _config.positional_embedding_type is None:
-            self._deactivate_positional_embeddings()
+        self.load_state_dict(_state_dict, _config)
 
         logger.info(f"finished loading model state dict from {_state_dict_path}")
 
@@ -329,23 +201,13 @@ class ModelWrapper(ABC):
         logger.info(f"saved model checkpoint to {checkpoint_path}")
 
     def _deactivate_positional_embeddings(self) -> None:
-        """
-        Deactivates the positional embedding in the model by setting its weights to zero
-        and freezing the gradient updates for the positional embedding parameters.
-        This method modifies the `W_pos` attribute of the `pos_embed` module in the model:
-        - sets all values in `W_pos` to 0.0.
-        - disables gradient computation for `W_pos` by setting `requires_grad` to False.
-        source: https://colab.research.google.com/github/TransformerLensOrg/TransformerLens/blob/main/demos/No_Position_Experiment.ipynb#scrollTo=fVWrVHo9y0T2
-        """
-
-        self.model.pos_embed.W_pos.data[:] = 0.0
-        self.model.pos_embed.W_pos.requires_grad = False
+        """placeholder hunk for use by the TransformerModel subclass"""
+        raise NotImplementedError
 
     def set_embeddings(self, embeddings: typing.Union[np.ndarray, torch.Tensor]):
         """
         explicitly set the embeddings of the model to a supplied weight matrix W_E.
-        the dimensionality of the matrix should be `vocab_size x d_model` as initialized (check
-        `self.config`)
+        the dimensionality of the matrix must be `vocab_size x d_model` (check `self.config`)
         """
         raise NotImplementedError
 
@@ -552,6 +414,7 @@ class ModelWrapper(ABC):
                     )
                     # end eval loop mid-epoch at however-many logging steps
                     ################################
+                    self.model.train()
 
             if (
                 training_config.logging_steps
@@ -825,6 +688,8 @@ class ModelWrapper(ABC):
             )
 
         # shape of logits: (b, seq_len, |V|)
+        # TODO: ERROR: mismatch for model_class 'rnn' ---
+        # TypeError: linear(): argument 'input' (position 1) must be Tensor, not tuple
         logits = self.model(inputs["token_ids"])
 
         if return_outputs:
@@ -854,112 +719,139 @@ class ModelWrapper(ABC):
             return loss
 
 
-def compute_masked_loss(
-    logits: torch.Tensor,
-    inputs: typing.Dict[str, torch.Tensor],
-    sparsity: float = 0.0,
-    # rescale_loss: bool = True,
-    rescale_loss: bool = False,
-    return_outputs: bool = False,
-) -> typing.Union[torch.Tensor, typing.Dict[str, torch.Tensor]]:
-    """
-    computes the loss for a batch of logits and inputs, limited to:
-    - specific answer locations in the sequence
-    - probabilistically chosen answer locations based on `sparsity`
+class RNNModelWrapper(ModelWrapper):
+    """ """
 
-    Parameters
-    ----------
-    - `logits` from a model (this can be softmaxed to get a distribution over the vocabulary elsewhere)
-    - `inputs` is the dictionary of tensors supplied to the model, which includes the key `input_ids`
-        and `answer_locations` which provides a 0-1 mask over which tokens in the sequence should be
-        considered 'predictions' (only these are used for loss computation)
-    - `sparsity` acts as an iid probability at each answer location to mask out the answer---this way, the model receives
-       no loss at this location.
-        Q: should we also mask the input answer immediately following the answer location?
-    - `return_outputs` will cause the method to return the gathered logits, argmax-softmaxed logit answers, and true labels
-        all as a dictionary with the keys `loss`, `gathered_logits`, `gathered_answers`, `gathered_labels`
+    class _forward_overridden_RNN(torch.nn.RNN):
+        """
+        overrides torch.nn.RNN to return only the output tensor, not the hidden state
+        so we can plug into the existing ModelWrapper interface
+        """
 
-    Example
-    --------
-    ```python
-    outputs = compute_masked_loss(logits, inputs, return_outputs=True)
-        loss, gathered_logits, gathered_answers, gathered_labels = (
-            outputs["loss"],
-            outputs["gathered_logits"],
-            outputs["gathered_answers"],
-            outputs["gathered_labels"],
+        def forward(self, input: torch.Tensor, hx: torch.Tensor = None) -> torch.Tensor:
+            output, hidden = super().forward(input, hx)
+            return output
+
+    def __init__(self, config: ModelConfig):
+        super().__init__(config)
+
+    def _init_model(self, config: ModelConfig):
+        """
+        uses RNNConfig to initialize an RNN language model capable of using a word-level tokenizer's
+        input_ids as input, converting them to learnable embeddings, and passing them through an n-layer
+        RNN with a specified hidden size and model_dim (same as embed_dim), and finally projecting the outputs
+        back to the vocabulary space for language modeling.
+        uses boilerplate RNN code from pytorch wherever possible.
+        """
+        self.model = torch.nn.Sequential(
+            torch.nn.Embedding(config.d_vocab, config.d_model),
+            self._forward_overridden_RNN(
+                input_size=config.d_model,
+                hidden_size=config.d_hidden,
+                num_layers=config.n_layers,
+                batch_first=True,
+                nonlinearity=config.act_fn,
+                bidirectional=False,
+            ),
+            torch.nn.Linear(config.d_hidden, config.d_vocab),
         )
-    ```
-    """
-    # logits have the shape (b, seq_len, |V|)
-    b, seq_len, vocab_size = logits.shape
 
-    # logger.debug(f"{logits.shape = }, {inputs['token_ids'].shape = }")
-    gathered_logits = logits[
-        :, inputs["answer_locations"][0].nonzero(as_tuple=True)[0] - 1, :
-    ]
-    gathered_labels = inputs["answers"][
-        :, inputs["answer_locations"][0].nonzero(as_tuple=True)[0]
-    ]
 
-    # depending on the sparsity parameter, we want to additionally zero-out some of the answer locations
-    # that are non-zero however, to achieve this, we can simply multiply the entire answer_locations
-    # tensor by a randomly-generated mask, since each item in the mask is iid. for answer locations that
-    # are zero already, nothing will change.
-    if sparsity > 0.9:
-        logger.warning(f"{sparsity = :.2f} is high")
-        if sparsity >= 0.99:
-            raise ValueError(
-                f"{sparsity = } is too high. sparsity=1 corresponds to no feedback"
-            )
+class LSTMModelWrapper(RNNModelWrapper):
+    class _forward_overridden_RNN(torch.nn.LSTM):
+        """
+        overrides torch.nn.RNN to return only the output tensor, not the hidden state
+        so we can plug into the existing ModelWrapper interface
+        """
 
-    sparsity_mask = (
-        torch.rand(b, gathered_labels.shape[1], device=logits.device).ge(sparsity).int()
-    )
-    sparsity_mask.requires_grad = False
+        def forward(self, input: torch.Tensor, hx: typing.Tuple = None) -> torch.Tensor:
+            output, (hidden, cell) = super().forward(input, hx)
+            return output
 
-    logger.debug(
-        f"in COMPUTE_MASKED_LOSS: {gathered_logits.shape = }, {gathered_labels.shape = }, {sparsity_mask.shape = }"
-    )
-    # logger.debug(gathered_answers)
+    def __init__(self, config: ModelConfig):
+        super().__init__(config)
 
-    # return shape: (b, seq_len)
-    loss = torch.nn.functional.cross_entropy(
-        # NOTE: a simple rearrange is not appropriate here! we need to permute the dimensions.
-        # see here for why: https://discuss.pytorch.org/t/for-beginners-do-not-use-view-or-reshape-to-swap-dimensions-of-tensors/75524
-        # DONT: einops.rearrange(logits, "b seq_len vocab -> b vocab seq_len"),
-        # DO:   torch.permute(gathered_logits, (0, 2, 1))
-        torch.permute(gathered_logits, (0, 2, 1)),
-        gathered_labels,
-        reduction="none",
-    )
-
-    logger.debug(f"{loss.shape = } {loss.greater(0).sum() = }. applying mask")
-    # apply sparsity mask to the loss to zero-out the loss at the locations dropped by sparsity computation
-    # this is done by multiplying the loss by the sparsity mask, which is 1
-    # at the locations we want to keep and 0 at the locations we want to drop
-    old_loss = loss.mean()  # / gathered_labels.shape[0]  # average over the batch size
-    loss = loss * sparsity_mask
-    logger.debug(
-        f"\tAFTER {loss.shape = } {loss.greater(0).sum() = }. AFTER applying mask"
-    )
-    loss = loss.mean()  # / gathered_labels.shape[0]  # average over the batch size
-    logger.debug(
-        f"old loss: {old_loss.item():.3f}, new loss after applying sparsity: {loss.item()}"
-    )
-    # at this point, our loss magnitude is smaller (rescaled by `sparsity` compared to the original loss)
-    # if we want it to be comparable, we can rescale it back up by 1 / (1 - sparsity)
-    if rescale_loss:
-        loss /= 1 - sparsity
-        logger.debug(f"new loss after rescaling: {loss.item()}")
-
-    if return_outputs:
-        return dict(
-            loss=loss,
-            gathered_logits=gathered_logits,
-            gathered_answers=torch.nn.functional.softmax(
-                gathered_logits, dim=-1
-            ).argmax(-1),
-            gathered_labels=gathered_labels,
+    def _init_model(self, config: ModelConfig):
+        """
+        uses RNNConfig to initialize an LSTM language model capable of using a word-level tokenizer's
+        input_ids as input, converting them to learnable embeddings, and passing them through an n-layer
+        LSTM with a specified hidden size and model_dim (same as embed_dim), and finally projecting the outputs
+        back to the vocabulary space for language modeling.
+        uses boilerplate LSTM code from pytorch wherever possible.
+        """
+        self.model = torch.nn.Sequential(
+            torch.nn.Embedding(config.d_vocab, config.d_model),
+            self._forward_overridden_RNN(
+                input_size=config.d_model,
+                hidden_size=config.d_hidden,
+                num_layers=config.n_layers,
+                batch_first=True,
+                bidirectional=False,
+            ),
+            torch.nn.Linear(config.d_hidden, config.d_vocab),
         )
-    return loss
+
+
+class TransformerModelWrapper(ModelWrapper):
+    def __init__(
+        self,
+        config: ModelConfig,
+    ):
+        super().__init__(config)
+
+    def _init_model(self, config: ModelConfig):
+        # Only pass fields that HookedTransformerConfig actually accepts, and
+        # continue to exclude fields that are not constructor arguments.
+        config_dict = dataclasses.asdict(config)
+        allowed_fields = HookedTransformerConfig.__dataclass_fields__.keys()
+        hooked_config_kwargs = {
+            k: v
+            for k, v in config_dict.items()
+            if k in allowed_fields and k not in ("from_pretrained", "positional_embedding_type")
+        }
+        hookedtfm_config = HookedTransformerConfig(
+            # d_head=config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
+            positional_embedding_type=(config.positional_embedding_type or "standard"),
+            **hooked_config_kwargs,
+        )
+        self.model = HookedTransformer(hookedtfm_config)
+
+        # only makes sense to deactivate positional embeddings at initialization
+        # if applicable (only for Transformer models)
+        if config.positional_embedding_type is None:
+            self._deactivate_positional_embeddings()
+
+    def load_state_dict(
+        self,
+        state_dict: typing.Dict[str, torch.Tensor],
+        _config: ModelConfig = None,
+    ):
+        """
+        we wrap the standard `load_and_process_state_dict` method of HookedTransformer to
+        make the interface consistent with AbstractPytorchModel which expects a `load_state_dict`
+        method implementation.
+        """
+        self.model.load_and_process_state_dict(
+            state_dict,
+            center_unembed=True,  # this shifts the unembedding matrix weights to be centered around 0
+            center_writing_weights=True,  # this shifts the weights written to residual stream to be centered around 0
+            fold_ln=False,
+            # refactor_factored_attn_matrices=True,
+        )
+
+        # if checkpoint to be loaded has no positional embedding, set the positional embedding weight matrix to
+        # zeroes and set grad off.
+        if _config is not None and _config.positional_embedding_type is None:
+            self._deactivate_positional_embeddings()
+
+    def _deactivate_positional_embeddings(self) -> None:
+        """
+        Deactivates the positional embedding in the model by setting its weights to zero
+        and freezing the gradient updates for the positional embedding parameters.
+        This method modifies the `W_pos` attribute of the `pos_embed` module in the model:
+        - sets all values in `W_pos` to 0.0.
+        - disables gradient computation for `W_pos` by setting `requires_grad` to False.
+        source: https://colab.research.google.com/github/TransformerLensOrg/TransformerLens/blob/main/demos/No_Position_Experiment.ipynb#scrollTo=fVWrVHo9y0T2
+        """
+        self.model.pos_embed.W_pos.data[:] = 0.0
+        self.model.pos_embed.W_pos.requires_grad = False

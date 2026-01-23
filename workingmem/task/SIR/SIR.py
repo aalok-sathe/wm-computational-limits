@@ -82,7 +82,7 @@ class SIRConfig(GeneratedCachedDatasetConfig):
         effective signal
         *f(N), where f(N) is ignore-trial-aware (TODO; NotImplemented)
         """
-    role_n_congruence: typing.Union[float, None] = 1.0
+    role_n_congruence: typing.Union[float, None] = 0.0
     """role-N congruence probability: (Y ~ Uniform[0,1])
         determines, at each trial generation step, whether the identity of
         the role sampled at that trial will be congruent with N*, should 
