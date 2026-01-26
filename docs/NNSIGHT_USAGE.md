@@ -48,7 +48,7 @@ When you want to inspect or modify model internals, wrap your forward pass with 
 from nnsight import LanguageModel
 
 # Wrap the model with nnsight's LanguageModel for tracing
-traced_model = LanguageModel(model.model._model)  # Access the underlying GPT2 model
+traced_model = LanguageModel(model.model.base_model)  # Access the underlying GPT2 model
 
 # Example: Accessing activations
 with traced_model.trace(input_ids) as tracer:
@@ -101,10 +101,10 @@ with traced_rnn.trace(input_ids) as tracer:
 ## Architecture Details
 
 ### Transformer (GPT2-based)
-- **Embedding**: `model._model.transformer.wte` (word token embeddings)
-- **Positional**: `model._model.transformer.wpe` (word position embeddings)
-- **Layers**: `model._model.transformer.h[i]` (transformer blocks)
-- **Output**: `model._model.lm_head` (language model head)
+- **Embedding**: `model.base_model.transformer.wte` (word token embeddings)
+- **Positional**: `model.base_model.transformer.wpe` (word position embeddings)
+- **Layers**: `model.base_model.transformer.h[i]` (transformer blocks)
+- **Output**: `model.base_model.lm_head` (language model head)
 
 ### RNN
 - **Embedding**: `model.embedding`

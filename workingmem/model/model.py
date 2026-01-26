@@ -33,6 +33,14 @@ from workingmem.model.interface import (
 logger = logging.getLogger("workingmem")
 logger.setLevel(logging.DEBUG)
 
+# Constants for positional embedding types
+POSITIONAL_EMBEDDING_ROTARY = "rotary"
+POSITIONAL_EMBEDDING_STANDARD = "standard"
+POSITIONAL_EMBEDDING_NONE = None
+
+# Constant for MLP dimension check
+ATTENTION_ONLY_MLP_DIM = 0
+
 
 class ModelWrapper(ABC):
     """
@@ -872,6 +880,9 @@ class GPT2LogitsWrapper(torch.nn.Module):
     
     Also exposes embed/unembed attributes for compatibility with existing
     embedding freezing code.
+    
+    Attributes:
+        _model: The underlying GPT2LMHeadModel instance
     """
     def __init__(self, gpt2_model: GPT2LMHeadModel):
         super().__init__()
@@ -892,8 +903,19 @@ class GPT2LogitsWrapper(torch.nn.Module):
         """Access to output layer (compatible with HookedTransformer interface)."""
         return self._model.lm_head
     
+    @property
+    def base_model(self):
+        """Public accessor for the underlying GPT2 model (for nnsight usage)."""
+        return self._model
+    
     def __getattr__(self, name):
-        """Delegate attribute access to the underlying model."""
+        """
+        Delegate attribute access to the underlying model.
+        
+        This enables accessing GPT2 internals through the wrapper, which is useful
+        for interpretability tools like nnsight. Note that this may mask some
+        attribute errors - use with caution.
+        """
         try:
             return super().__getattr__(name)
         except AttributeError:
@@ -917,22 +939,25 @@ class TransformerModelWrapper(ModelWrapper):
         requested via config.positional_embedding_type, a warning will be logged.
         """
         # Warn if rotary embeddings are requested (not supported by standard GPT2)
-        if config.positional_embedding_type == "rotary":
+        if config.positional_embedding_type == POSITIONAL_EMBEDDING_ROTARY:
             logger.warning(
-                "Rotary positional embeddings requested but not supported by GPT2. "
-                "Using standard learned positional embeddings instead. "
-                "Consider using a model that supports rotary embeddings (e.g., LLaMA) "
-                "or implementing rotary embeddings manually."
+                f"Rotary positional embeddings requested but not supported by GPT2. "
+                f"Using standard learned positional embeddings instead. "
+                f"Consider using a model that supports rotary embeddings (e.g., LLaMA) "
+                f"or implementing rotary embeddings manually."
             )
         
         # Create GPT2Config from our ModelConfig
+        # For attention-only models, set n_inner=None
+        is_attention_only = (config.d_mlp == ATTENTION_ONLY_MLP_DIM)
+        
         gpt2_config = GPT2Config(
             vocab_size=config.d_vocab,
             n_positions=config.n_ctx,
             n_embd=config.d_model,
             n_layer=config.n_layers,
             n_head=config.n_heads,
-            n_inner=config.d_mlp if config.d_mlp > 0 else None,  # None for attention-only models
+            n_inner=None if is_attention_only else config.d_mlp,
             activation_function=config.act_fn,
             resid_pdrop=0.0,  # No dropout for consistency
             embd_pdrop=0.0,
@@ -948,7 +973,7 @@ class TransformerModelWrapper(ModelWrapper):
 
         # only makes sense to deactivate positional embeddings at initialization
         # if applicable (only for Transformer models)
-        if config.positional_embedding_type is None:
+        if config.positional_embedding_type is POSITIONAL_EMBEDDING_NONE:
             self._deactivate_positional_embeddings()
 
     def load_state_dict(
@@ -964,7 +989,7 @@ class TransformerModelWrapper(ModelWrapper):
 
         # if checkpoint to be loaded has no positional embedding, set the positional embedding weight matrix to
         # zeroes and set grad off.
-        if _config is not None and _config.positional_embedding_type is None:
+        if _config is not None and _config.positional_embedding_type is POSITIONAL_EMBEDDING_NONE:
             self._deactivate_positional_embeddings()
 
     def _deactivate_positional_embeddings(self) -> None:
@@ -973,8 +998,8 @@ class TransformerModelWrapper(ModelWrapper):
         and freezing the gradient updates for the positional embedding parameters.
         For GPT2, the positional embeddings are in transformer.wpe (word position embeddings).
         """
-        # Access the underlying GPT2 model through the wrapper
-        gpt2_model = self.model._model if hasattr(self.model, '_model') else self.model
+        # Access the underlying GPT2 model through the public accessor
+        gpt2_model = self.model.base_model if hasattr(self.model, 'base_model') else self.model
         
         # GPT2's positional embeddings are in transformer.wpe
         if hasattr(gpt2_model, 'transformer') and hasattr(gpt2_model.transformer, 'wpe'):
