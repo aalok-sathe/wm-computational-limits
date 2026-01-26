@@ -12,6 +12,8 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformer_lens import HookedTransformer, HookedTransformerConfig
+from transformers import GPT2Config, GPT2LMHeadModel
+from nnsight import LanguageModel
 
 import wandb
 
@@ -792,6 +794,42 @@ class LSTMModelWrapper(RNNModelWrapper):
         )
 
 
+class GPT2LogitsWrapper(torch.nn.Module):
+    """
+    Wrapper around GPT2LMHeadModel that returns only logits for compatibility
+    with the existing training code. This makes the model interface consistent
+    with HookedTransformer which returns logits directly.
+    
+    Also exposes embed/unembed attributes for compatibility with existing
+    embedding freezing code.
+    """
+    def __init__(self, gpt2_model: GPT2LMHeadModel):
+        super().__init__()
+        self._model = gpt2_model
+        
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Forward pass that returns only logits."""
+        outputs = self._model(input_ids)
+        return outputs.logits
+    
+    @property
+    def embed(self):
+        """Access to word token embeddings (compatible with HookedTransformer interface)."""
+        return self._model.transformer.wte
+    
+    @property
+    def unembed(self):
+        """Access to output layer (compatible with HookedTransformer interface)."""
+        return self._model.lm_head
+    
+    def __getattr__(self, name):
+        """Delegate attribute access to the underlying model."""
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self._model, name)
+
+
 class TransformerModelWrapper(ModelWrapper):
     def __init__(
         self,
@@ -800,21 +838,43 @@ class TransformerModelWrapper(ModelWrapper):
         super().__init__(config)
 
     def _init_model(self, config: ModelConfig):
-        # Only pass fields that HookedTransformerConfig actually accepts, and
-        # continue to exclude fields that are not constructor arguments.
-        config_dict = dataclasses.asdict(config)
-        allowed_fields = HookedTransformerConfig.__dataclass_fields__.keys()
-        hooked_config_kwargs = {
-            k: v
-            for k, v in config_dict.items()
-            if k in allowed_fields and k not in ("from_pretrained", "positional_embedding_type")
-        }
-        hookedtfm_config = HookedTransformerConfig(
-            # d_head=config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
-            positional_embedding_type=(config.positional_embedding_type or "standard"),
-            **hooked_config_kwargs,
+        """
+        Initialize a GPT-2 style transformer model using HuggingFace's GPT2LMHeadModel.
+        This replaces the HookedTransformer implementation and is compatible with nnsight
+        for interpretability when needed.
+        
+        Note: GPT2 uses learned absolute positional embeddings. If rotary embeddings are
+        requested via config.positional_embedding_type, a warning will be logged.
+        """
+        # Warn if rotary embeddings are requested (not supported by standard GPT2)
+        if config.positional_embedding_type == "rotary":
+            logger.warning(
+                "Rotary positional embeddings requested but not supported by GPT2. "
+                "Using standard learned positional embeddings instead. "
+                "Consider using a model that supports rotary embeddings (e.g., LLaMA) "
+                "or implementing rotary embeddings manually."
+            )
+        
+        # Create GPT2Config from our ModelConfig
+        gpt2_config = GPT2Config(
+            vocab_size=config.d_vocab,
+            n_positions=config.n_ctx,
+            n_embd=config.d_model,
+            n_layer=config.n_layers,
+            n_head=config.n_heads,
+            n_inner=config.d_mlp if config.d_mlp > 0 else None,  # None for attention-only models
+            activation_function=config.act_fn,
+            resid_pdrop=0.0,  # No dropout for consistency
+            embd_pdrop=0.0,
+            attn_pdrop=0.0,
+            layer_norm_epsilon=1e-5,
         )
-        self.model = HookedTransformer(hookedtfm_config)
+        
+        # Create the base GPT-2 model
+        base_model = GPT2LMHeadModel(gpt2_config)
+        
+        # Wrap to return logits directly for compatibility with existing code
+        self.model = GPT2LogitsWrapper(base_model)
 
         # only makes sense to deactivate positional embeddings at initialization
         # if applicable (only for Transformer models)
@@ -827,17 +887,10 @@ class TransformerModelWrapper(ModelWrapper):
         _config: ModelConfig = None,
     ):
         """
-        we wrap the standard `load_and_process_state_dict` method of HookedTransformer to
-        make the interface consistent with AbstractPytorchModel which expects a `load_state_dict`
-        method implementation.
+        Load state dict into the nnsight-wrapped model.
+        nnsight's LanguageModel wraps a standard PyTorch model, so we use standard load_state_dict.
         """
-        self.model.load_and_process_state_dict(
-            state_dict,
-            center_unembed=True,  # this shifts the unembedding matrix weights to be centered around 0
-            center_writing_weights=True,  # this shifts the weights written to residual stream to be centered around 0
-            fold_ln=False,
-            # refactor_factored_attn_matrices=True,
-        )
+        self.model.load_state_dict(state_dict)
 
         # if checkpoint to be loaded has no positional embedding, set the positional embedding weight matrix to
         # zeroes and set grad off.
@@ -848,10 +901,12 @@ class TransformerModelWrapper(ModelWrapper):
         """
         Deactivates the positional embedding in the model by setting its weights to zero
         and freezing the gradient updates for the positional embedding parameters.
-        This method modifies the `W_pos` attribute of the `pos_embed` module in the model:
-        - sets all values in `W_pos` to 0.0.
-        - disables gradient computation for `W_pos` by setting `requires_grad` to False.
-        source: https://colab.research.google.com/github/TransformerLensOrg/TransformerLens/blob/main/demos/No_Position_Experiment.ipynb#scrollTo=fVWrVHo9y0T2
+        For GPT2, the positional embeddings are in transformer.wpe (word position embeddings).
         """
-        self.model.pos_embed.W_pos.data[:] = 0.0
-        self.model.pos_embed.W_pos.requires_grad = False
+        # Access the underlying GPT2 model through the wrapper
+        gpt2_model = self.model._model if hasattr(self.model, '_model') else self.model
+        
+        # GPT2's positional embeddings are in transformer.wpe
+        if hasattr(gpt2_model, 'transformer') and hasattr(gpt2_model.transformer, 'wpe'):
+            gpt2_model.transformer.wpe.weight.data[:] = 0.0
+            gpt2_model.transformer.wpe.weight.requires_grad = False
