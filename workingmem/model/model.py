@@ -722,75 +722,145 @@ class ModelWrapper(ABC):
 
 
 class RNNModelWrapper(ModelWrapper):
-    """ """
+    """
+    RNN-based language model wrapper that is compatible with nnsight for interpretability.
+    The model architecture exposes individual components (embedding, rnn, output_layer) 
+    to enable easier access to activations when using nnsight tracing.
+    """
 
-    class _forward_overridden_RNN(torch.nn.RNN):
+    class _RNNCore(torch.nn.Module):
         """
-        overrides torch.nn.RNN to return only the output tensor, not the hidden state
-        so we can plug into the existing ModelWrapper interface
+        Core RNN module that returns only the output tensor, not the hidden state,
+        for compatibility with the existing ModelWrapper interface.
         """
-
+        def __init__(self, input_size, hidden_size, num_layers, batch_first, nonlinearity):
+            super().__init__()
+            self.rnn = torch.nn.RNN(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=batch_first,
+                nonlinearity=nonlinearity,
+                bidirectional=False,
+            )
+        
         def forward(self, input: torch.Tensor, hx: torch.Tensor = None) -> torch.Tensor:
-            output, hidden = super().forward(input, hx)
+            output, hidden = self.rnn(input, hx)
             return output
+
+    class _RNNLanguageModel(torch.nn.Module):
+        """
+        Complete RNN language model with exposed components for nnsight compatibility.
+        """
+        def __init__(self, vocab_size, d_model, hidden_size, num_layers, act_fn):
+            super().__init__()
+            self.embedding = torch.nn.Embedding(vocab_size, d_model)
+            self.rnn_core = RNNModelWrapper._RNNCore(
+                input_size=d_model,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                nonlinearity=act_fn,
+            )
+            self.output_layer = torch.nn.Linear(hidden_size, vocab_size)
+            
+            # Aliases for compatibility with existing freeze_embeddings code
+            self.embed = self.embedding
+            self.unembed = self.output_layer
+        
+        def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+            x = self.embedding(input_ids)
+            x = self.rnn_core(x)
+            logits = self.output_layer(x)
+            return logits
 
     def __init__(self, config: ModelConfig):
         super().__init__(config)
 
     def _init_model(self, config: ModelConfig):
         """
-        uses RNNConfig to initialize an RNN language model capable of using a word-level tokenizer's
-        input_ids as input, converting them to learnable embeddings, and passing them through an n-layer
-        RNN with a specified hidden size and model_dim (same as embed_dim), and finally projecting the outputs
-        back to the vocabulary space for language modeling.
-        uses boilerplate RNN code from pytorch wherever possible.
+        Initialize an RNN language model with exposed components for nnsight interpretability.
+        The model converts input_ids to embeddings, processes them through an RNN,
+        and projects to vocabulary space for language modeling.
+        
+        Components are exposed as: embedding, rnn_core, output_layer for easy access.
         """
-        self.model = torch.nn.Sequential(
-            torch.nn.Embedding(config.d_vocab, config.d_model),
-            self._forward_overridden_RNN(
-                input_size=config.d_model,
-                hidden_size=config.d_hidden,
-                num_layers=config.n_layers,
-                batch_first=True,
-                nonlinearity=config.act_fn,
-                bidirectional=False,
-            ),
-            torch.nn.Linear(config.d_hidden, config.d_vocab),
+        self.model = self._RNNLanguageModel(
+            vocab_size=config.d_vocab,
+            d_model=config.d_model,
+            hidden_size=config.d_hidden,
+            num_layers=config.n_layers,
+            act_fn=config.act_fn,
         )
 
 
 class LSTMModelWrapper(RNNModelWrapper):
-    class _forward_overridden_RNN(torch.nn.LSTM):
+    """
+    LSTM-based language model wrapper that is compatible with nnsight for interpretability.
+    The model architecture exposes individual components (embedding, lstm_core, output_layer)
+    to enable easier access to activations when using nnsight tracing.
+    """
+    
+    class _LSTMCore(torch.nn.Module):
         """
-        overrides torch.nn.RNN to return only the output tensor, not the hidden state
-        so we can plug into the existing ModelWrapper interface
+        Core LSTM module that returns only the output tensor, not the hidden states,
+        for compatibility with the existing ModelWrapper interface.
         """
-
+        def __init__(self, input_size, hidden_size, num_layers, batch_first):
+            super().__init__()
+            self.lstm = torch.nn.LSTM(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=batch_first,
+                bidirectional=False,
+            )
+        
         def forward(self, input: torch.Tensor, hx: typing.Tuple = None) -> torch.Tensor:
-            output, (hidden, cell) = super().forward(input, hx)
+            output, (hidden, cell) = self.lstm(input, hx)
             return output
+
+    class _LSTMLanguageModel(torch.nn.Module):
+        """
+        Complete LSTM language model with exposed components for nnsight compatibility.
+        """
+        def __init__(self, vocab_size, d_model, hidden_size, num_layers):
+            super().__init__()
+            self.embedding = torch.nn.Embedding(vocab_size, d_model)
+            self.lstm_core = LSTMModelWrapper._LSTMCore(
+                input_size=d_model,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+            )
+            self.output_layer = torch.nn.Linear(hidden_size, vocab_size)
+            
+            # Aliases for compatibility with existing freeze_embeddings code
+            self.embed = self.embedding
+            self.unembed = self.output_layer
+        
+        def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+            x = self.embedding(input_ids)
+            x = self.lstm_core(x)
+            logits = self.output_layer(x)
+            return logits
 
     def __init__(self, config: ModelConfig):
         super().__init__(config)
 
     def _init_model(self, config: ModelConfig):
         """
-        uses RNNConfig to initialize an LSTM language model capable of using a word-level tokenizer's
-        input_ids as input, converting them to learnable embeddings, and passing them through an n-layer
-        LSTM with a specified hidden size and model_dim (same as embed_dim), and finally projecting the outputs
-        back to the vocabulary space for language modeling.
-        uses boilerplate LSTM code from pytorch wherever possible.
+        Initialize an LSTM language model with exposed components for nnsight interpretability.
+        The model converts input_ids to embeddings, processes them through an LSTM,
+        and projects to vocabulary space for language modeling.
+        
+        Components are exposed as: embedding, lstm_core, output_layer for easy access.
         """
-        self.model = torch.nn.Sequential(
-            torch.nn.Embedding(config.d_vocab, config.d_model),
-            self._forward_overridden_RNN(
-                input_size=config.d_model,
-                hidden_size=config.d_hidden,
-                num_layers=config.n_layers,
-                batch_first=True,
-                bidirectional=False,
-            ),
-            torch.nn.Linear(config.d_hidden, config.d_vocab),
+        self.model = self._LSTMLanguageModel(
+            vocab_size=config.d_vocab,
+            d_model=config.d_model,
+            hidden_size=config.d_hidden,
+            num_layers=config.n_layers,
         )
 
 
