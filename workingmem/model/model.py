@@ -908,6 +908,10 @@ class PositionalEncoding(nn.Module):
 class RotaryPositionalEmbedding(nn.Module):
     """
     Rotary Position Embedding (RoPE) as described in https://arxiv.org/abs/2104.09864
+    
+    Note: This implementation applies rotary embeddings to the full sequence embeddings.
+    For true RoPE behavior in multi-head attention, custom attention layers would be needed.
+    This implementation approximates RoPE by rotating the embeddings before passing to the transformer.
     """
     
     def __init__(self, dim: int, max_len: int = 5000, base: int = 10000):
@@ -931,9 +935,11 @@ class RotaryPositionalEmbedding(nn.Module):
             self._seq_len_cached = seq_len
             t = torch.arange(seq_len, device=device).type_as(self.inv_freq)
             freqs = torch.einsum('i,j->ij', t, self.inv_freq)
+            # Repeat frequencies for full dimension
             emb = torch.cat((freqs, freqs), dim=-1)
-            self._cos_cached = emb.cos()[None, :, None, :]
-            self._sin_cached = emb.sin()[None, :, None, :]
+            # Add batch and head dimensions for broadcasting
+            self._cos_cached = emb.cos()
+            self._sin_cached = emb.sin()
     
     def rotate_half(self, x: torch.Tensor) -> torch.Tensor:
         """Rotates half the hidden dims of the input."""
@@ -941,30 +947,31 @@ class RotaryPositionalEmbedding(nn.Module):
         x2 = x[..., x.shape[-1] // 2:]
         return torch.cat((-x2, x1), dim=-1)
     
-    def apply_rotary_pos_emb(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Apply rotary positional embedding to input tensor.
         
         Args:
-            x: Tensor of shape (batch_size, seq_len, num_heads, head_dim)
+            x: Tensor of shape (batch_size, seq_len, d_model)
         Returns:
-            Tensor with rotary embeddings applied
+            Tensor with rotary embeddings applied, shape (batch_size, seq_len, d_model)
         """
         seq_len = x.shape[1]
         self._update_cache(seq_len, x.device)
-        return (x * self._cos_cached) + (self.rotate_half(x) * self._sin_cached)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: Tensor of shape (batch_size, seq_len, d_model)
-        Returns:
-            Tensor with rotary embeddings applied
-        """
-        # For compatibility with the standard positional encoding interface,
-        # we return the input unchanged. The actual rotation is applied in attention.
-        # This is a placeholder to maintain interface consistency.
-        return x
+        
+        # Apply rotary embedding
+        # Shape: (seq_len, d_model)
+        cos = self._cos_cached[:seq_len, :x.shape[-1]]
+        sin = self._sin_cached[:seq_len, :x.shape[-1]]
+        
+        # Broadcast to batch dimension
+        cos = cos.unsqueeze(0)  # (1, seq_len, d_model)
+        sin = sin.unsqueeze(0)  # (1, seq_len, d_model)
+        
+        # Apply rotation
+        x_rotated = (x * cos) + (self.rotate_half(x) * sin)
+        
+        return x_rotated
 
 
 class TransformerModelWrapper(ModelWrapper):
@@ -1001,7 +1008,8 @@ class TransformerModelWrapper(ModelWrapper):
             if positional_embedding_type == POSITIONAL_EMBEDDING_STANDARD:
                 self.pos_encoder = PositionalEncoding(d_model, max_len, learnable=True)
             elif positional_embedding_type == POSITIONAL_EMBEDDING_ROTARY:
-                self.pos_encoder = RotaryPositionalEmbedding(d_model // n_heads, max_len)
+                # For rotary embeddings, use full d_model dimension
+                self.pos_encoder = RotaryPositionalEmbedding(d_model, max_len)
             elif positional_embedding_type is POSITIONAL_EMBEDDING_NONE:
                 self.pos_encoder = None
             else:
@@ -1054,16 +1062,8 @@ class TransformerModelWrapper(ModelWrapper):
             
             # Add positional encoding
             if self.pos_encoder is not None:
-                if self.positional_embedding_type == POSITIONAL_EMBEDDING_ROTARY:
-                    # For rotary embeddings, we just pass through here
-                    # The actual rotation would be applied inside attention if we had custom attention
-                    # Since we're using nn.Transformer, rotary is approximated by standard encoding
-                    # For true rotary support, we'd need to implement custom attention layers
-                    pos_enc = self.pos_encoder(x)
-                    x = x + pos_enc
-                else:
-                    # Standard learned or sinusoidal positional encoding
-                    x = x + self.pos_encoder(x)
+                pos_enc = self.pos_encoder(x)
+                x = x + pos_enc
             
             # Create causal mask for autoregressive generation
             seq_len = input_ids.size(1)
