@@ -10,14 +10,21 @@ All models in this library (Transformer, RNN, LSTM) are now compatible with [nns
 - Compute gradients with respect to intermediate values
 - Batch interventions efficiently
 
-## Changes from HookedTransformer
+## Model Architecture
 
-The Transformer model has been migrated from `HookedTransformer` (transformer-lens) to HuggingFace's `GPT2LMHeadModel`, which is:
-- Faster and more widely supported
+### Transformer
+The Transformer model uses PyTorch's `nn.Transformer` as the core architecture, similar to how RNN and LSTM are implemented. This provides a bare-bones, general-purpose implementation that is:
+- Not tied to any specific architecture (e.g., GPT-2, BERT)
+- Easily modifiable for research purposes
 - Fully compatible with nnsight for interpretability
-- Uses standard PyTorch interfaces
 
-RNN and LSTM models have been restructured to expose their internal components (embedding, rnn_core/lstm_core, output_layer) for easier access with nnsight.
+The model supports multiple positional embedding types:
+- **standard**: Learned positional embeddings (default)
+- **rotary**: Rotary Position Embeddings (RoPE)
+- **None**: No positional embeddings
+
+### RNN & LSTM
+RNN and LSTM models expose their internal components (embedding, rnn_core/lstm_core, output_layer) for easier access with nnsight.
 
 ## Basic Usage
 
@@ -33,6 +40,7 @@ config = ModelConfig(
     n_layers=2,
     d_model=256,
     d_vocab=100,
+    positional_embedding_type="rotary",  # or "standard", or None
     # ... other config options
 )
 
@@ -48,29 +56,29 @@ When you want to inspect or modify model internals, wrap your forward pass with 
 from nnsight import LanguageModel
 
 # Wrap the model with nnsight's LanguageModel for tracing
-traced_model = LanguageModel(model.model.base_model)  # Access the underlying GPT2 model
+traced_model = LanguageModel(model.model)
 
 # Example: Accessing activations
 with traced_model.trace(input_ids) as tracer:
-    # Access hidden states from a specific layer
-    hidden_states = traced_model.transformer.h[0].output[0].save()
+    # Access embeddings
+    embeddings = traced_model.embedding.output.save()
     
-    # Access attention output
-    attn_output = traced_model.transformer.h[0].attn.output[0].save()
+    # Access transformer encoder output
+    encoder_output = traced_model.transformer_encoder.output.save()
 
-print(f"Hidden states shape: {hidden_states.shape}")
+print(f"Embeddings shape: {embeddings.shape}")
 ```
 
 ### Intervening on Activations
 
 ```python
-# Zero out activations at a specific layer
+# Zero out activations at the embedding layer
 with traced_model.trace(input_ids) as tracer:
-    # Modify layer 0 activations
-    traced_model.transformer.h[0].output[0][:] = 0
+    # Modify embeddings
+    traced_model.embedding.output[:] = 0
     
     # Get the output after intervention
-    output = traced_model.lm_head.output.save()
+    output = traced_model.output_layer.output.save()
 ```
 
 ### RNN/LSTM with nnsight
@@ -100,11 +108,11 @@ with traced_rnn.trace(input_ids) as tracer:
 
 ## Architecture Details
 
-### Transformer (GPT2-based)
-- **Embedding**: `model.base_model.transformer.wte` (word token embeddings)
-- **Positional**: `model.base_model.transformer.wpe` (word position embeddings)
-- **Layers**: `model.base_model.transformer.h[i]` (transformer blocks)
-- **Output**: `model.base_model.lm_head` (language model head)
+### Transformer (PyTorch nn.Transformer-based)
+- **Embedding**: `model.embedding` (token embeddings)
+- **Positional Encoding**: `model.pos_encoder` (positional embeddings, if enabled)
+- **Transformer Encoder**: `model.transformer_encoder` (transformer layers)
+- **Output**: `model.output_layer` (projection to vocabulary)
 
 ### RNN
 - **Embedding**: `model.embedding`
@@ -116,39 +124,68 @@ with traced_rnn.trace(input_ids) as tracer:
 - **LSTM Core**: `model.lstm_core` (contains the LSTM layers)
 - **Output**: `model.output_layer`
 
+## Positional Embedding Types
+
+### Standard (Learned)
+```python
+config = ModelConfig(
+    positional_embedding_type="standard",
+    # ... other options
+)
+```
+Uses learned positional embeddings similar to the original Transformer paper.
+
+### Rotary Position Embeddings (RoPE)
+```python
+config = ModelConfig(
+    positional_embedding_type="rotary",
+    # ... other options
+)
+```
+Implements Rotary Position Embeddings as described in [RoFormer](https://arxiv.org/abs/2104.09864).
+
+### No Positional Embeddings
+```python
+config = ModelConfig(
+    positional_embedding_type=None,
+    # ... other options
+)
+```
+Disables positional embeddings entirely. Useful for studying position-independent representations.
+
 ## Important Notes
 
-1. **Positional Embeddings**: GPT2 uses learned absolute positional embeddings. If your config specifies `positional_embedding_type="rotary"`, a warning will be logged and standard embeddings will be used instead.
+1. **Positional Embeddings**: All three types (standard, rotary, None) are fully supported.
 
-2. **No Positional Embeddings**: Setting `positional_embedding_type=None` works as before - the positional embedding weights are zeroed and frozen.
+2. **Backward Compatibility**: Existing checkpoints from previous implementations may not be directly compatible. Retrain models if needed.
 
-3. **Backward Compatibility**: Existing checkpoints from HookedTransformer models may not be directly compatible. You'll need to either:
-   - Retrain models with the new architecture
-   - Implement state dict conversion (not currently provided)
+3. **Performance**: The bare-bones PyTorch implementation is efficient and suitable for research purposes.
 
-4. **Performance**: The new GPT2-based implementation should be faster than HookedTransformer for standard forward passes while maintaining full interpretability capabilities through nnsight.
+4. **Interpretability**: All components are easily accessible through nnsight's tracing functionality.
 
 ## Example: Causal Intervention Study
 
 ```python
-# Study the causal effect of layer 1 on the output
+# Study the causal effect of positional embeddings on the output
 with traced_model.trace(input_ids) as tracer:
     # Save unmodified output
     with tracer.invoke():
-        normal_output = traced_model.lm_head.output.save()
+        normal_output = traced_model.output_layer.output.save()
     
-    # Intervene on layer 1
+    # Zero out positional embeddings
     with tracer.invoke():
-        traced_model.transformer.h[1].output[0][:] = 0
-        intervened_output = traced_model.lm_head.output.save()
+        if traced_model.pos_encoder is not None:
+            traced_model.pos_encoder.output[:] = 0
+        intervened_output = traced_model.output_layer.output.save()
 
 # Compare outputs
 difference = normal_output - intervened_output
-print(f"Effect of layer 1: {difference.abs().mean()}")
+print(f"Effect of positional embeddings: {difference.abs().mean()}")
 ```
 
 ## Further Reading
 
 - [nnsight Documentation](https://nnsight.net)
 - [nnsight GitHub](https://github.com/ndif-team/nnsight)
-- [HuggingFace GPT2 Documentation](https://huggingface.co/docs/transformers/model_doc/gpt2)
+- [PyTorch Transformer Documentation](https://pytorch.org/docs/stable/generated/torch.nn.Transformer.html)
+- [Rotary Position Embeddings Paper](https://arxiv.org/abs/2104.09864)

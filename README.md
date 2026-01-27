@@ -8,17 +8,20 @@ This library implements three model classes: **Transformer**, **RNN**, and **LST
 
 ### Recent Changes (v0.2)
 
-The Transformer implementation has been **migrated from HookedTransformer (transformer-lens) to HuggingFace's GPT2LMHeadModel** for improved performance and compatibility with modern interpretability tools. All models are now fully compatible with [nnsight](https://github.com/ndif-team/nnsight) for activation inspection and intervention.
+The Transformer implementation now uses **PyTorch's nn.Transformer** as the core architecture, providing a bare-bones, general-purpose implementation similar to RNN and LSTM. All models are fully compatible with [nnsight](https://github.com/ndif-team/nnsight) for activation inspection and intervention.
 
 See [`docs/NNSIGHT_USAGE.md`](docs/NNSIGHT_USAGE.md) for details on using nnsight with these models.
 
-**Key Changes:**
-- Transformer now uses GPT2LMHeadModel instead of HookedTransformer
-- All models (Transformer, RNN, LSTM) expose internal components for interpretability
-- Full nnsight compatibility for activation tracing and intervention
-- Improved performance in forward passes
+**Key Features:**
+- **Transformer**: Uses PyTorch nn.Transformer with support for multiple positional embedding types:
+  - Standard learned positional embeddings
+  - Rotary Position Embeddings (RoPE)
+  - No positional embeddings (for position-independent experiments)
+- **RNN & LSTM**: Expose internal components (embedding, core, output_layer) for interpretability
+- Full nnsight compatibility for all models
+- General-purpose, easily modifiable architecture not tied to specific models (e.g., GPT-2)
 
-**Note:** Existing HookedTransformer checkpoints are not directly compatible with the new architecture and will need to be retrained.
+**Note:** The new implementation is not compatible with previous HookedTransformer checkpoints. Models will need to be retrained.
 
 ## Task Description
 

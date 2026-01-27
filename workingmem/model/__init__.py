@@ -5,7 +5,6 @@ from workingmem.model.model import (
     TransformerModelWrapper,
     RNNModelWrapper,
     LSTMModelWrapper,
-    GPT2LogitsWrapper,
     #
     ModelConfig,
     # TransformerConfig,
