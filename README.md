@@ -2,6 +2,29 @@
 
 Are there computational limits on human working memory (WM) capacity aside from anatomical limits?
 
+## Model Architecture
+
+This library implements three model classes: **Transformer**, **RNN**, and **LSTM**.
+
+### Recent Changes (v0.2)
+
+The Transformer implementation now uses **PyTorch's nn.Transformer** as the core architecture, providing a bare-bones, general-purpose implementation similar to RNN and LSTM. All models are fully compatible with [nnsight](https://github.com/ndif-team/nnsight) for activation inspection and intervention.
+
+See [`docs/NNSIGHT_USAGE.md`](docs/NNSIGHT_USAGE.md) for details on using nnsight with these models.
+
+**Key Features:**
+- **Transformer**: Uses PyTorch nn.Transformer with support for multiple positional embedding types:
+  - Standard learned positional embeddings
+  - Rotary Position Embeddings (RoPE)
+  - No positional embeddings (for position-independent experiments)
+- **RNN & LSTM**: Expose internal components (embedding, core, output_layer) for interpretability
+- Full nnsight compatibility for all models
+- General-purpose, easily modifiable architecture not tied to specific models (e.g., GPT-2)
+
+**Note:** The new implementation is not compatible with previous HookedTransformer checkpoints. Models will need to be retrained.
+
+## Task Description
+
 The directory `workingmem.task.SIR` contains a version of the Store-Ignore-Recall (SIR) task used in human
 experiments to tax working memory (CITE). The task involves storing and recalling items stored in
 virtual WM 'slots', here, 'registers'. In humans, the task requires active role-addressable 
