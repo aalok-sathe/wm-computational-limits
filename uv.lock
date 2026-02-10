@@ -3780,7 +3780,7 @@ wheels = [
 ]
 
 [[package]]
-name = "wm-limits"
+name = "wm-computational-limits"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

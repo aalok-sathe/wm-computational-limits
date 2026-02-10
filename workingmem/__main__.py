@@ -45,7 +45,7 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-7.3.2c0"
+    project_name: str = "wm-comp-limit-7.4.1c1_pt"
     # method: str = "bayes"  # use this for a hparam sweep
     method: str = "grid"  # use this once hparams are fixed
     metric: dict = dataclasses.field(
@@ -78,6 +78,7 @@ class MainConfig:
     seed = None
     array_task_id: typing.Union[int, None] = None
     filter_by_accuracy: bool = None
+    filter_by_accuracy_threshold: float = 0.7
 
     def __post_init__(self):
         logger.info(f"running post-init hook to set seeds to {self.seed}")
@@ -155,8 +156,10 @@ def main(config: MainConfig):
         )
 
         if config.filter_by_accuracy:
+            threshold: float = config.filter_by_accuracy_threshold
+
             # filter models by the accuracy recorded in their history
-            def filter_by_accuracy(m: Path, threshold=0.95) -> bool:
+            def filter_by_accuracy(m: Path, threshold=threshold) -> bool:
                 with open(m / "history.yaml", "r") as f:
                     history = yaml.load(f, Loader=yaml.FullLoader)
                 return history[-1]["eval_acc"] >= threshold
@@ -164,7 +167,7 @@ def main(config: MainConfig):
             prev_len = len(models_dir)
             models_dir = list(filter(filter_by_accuracy, models_dir))
             logger.info(
-                f"filtering models by accuracy >= .99 in {models_dir}. {prev_len = }, {len(models_dir) = }"
+                f"filtering models by accuracy >= {threshold} in {models_dir}. {prev_len = }, {len(models_dir) = }"
             )
 
         # set `from_pretrained` path to one of the pretrained models after filtering for its end accuracy.
@@ -266,14 +269,15 @@ if __name__ == "__main__":
         # parameters to use when we want to optimize hyperparameters before fixing them for experimentation
         ############
         hparam_optimization_params = {
-            "model.n_heads": {"values": [2, 4, 6]},
+            # "model.n_heads": {"values": [2, 4, 6]},
+            "model.n_layers": {"values": [1, 2]},
             "model.d_model": {"values": [64, 128, 256, 512]},
-            "model.d_head": {"values": [64, 128, 256, 512]},
+            "model.d_hidden": {"values": [64, 128, 256, 512]},
             # we use a smaller range of seeds just to make sure out hparams aren't overly seed-specific.
             # TODO: this should actually be set to `None` at optimization-time so the sweep doesn't overfit
             # to a particular subset of seeds (there is unfortunately no way to fully exclude the random seed
             # from sweep parameters)
-            "model.seed": {"values": [*map(str, range(62, 67))]},
+            "model.seed": {"values": [*map(str, range(162, 167))]},
             "trainer.learning_rate": {
                 "min": 1e-6,
                 "max": 1e-2,
@@ -286,12 +290,19 @@ if __name__ == "__main__":
         ############
         fixed_experimental_params = {
             "model.n_heads": {"value": 4},
-            "model.d_head": {"value": 256},
-            "model.d_model": {"value": 256},
+            "model.d_head": {"value": 512},
+            "model.d_model": {"value": 512},
             "model.seed": {
                 "values": [*map(str, range(42, 42 + 15))]
             },  # 15 random seeds; non-overlapping range with the seeds used for hparam sweep above
-            "trainer.learning_rate": {"value": 2.2e-4},
+            # rnn x n_back
+            # "trainer.learning_rate": {"value": 2e-4},
+            # # rnn x ref_back
+            # "trainer.learning_rate": {"value": 2e-4},
+            # # lstm x n_back
+            # "trainer.learning_rate": {"value": 3e-4},
+            # # lstm x ref_back
+            # "trainer.learning_rate": {"value": 1e-3},
         }
         ############
 
@@ -340,7 +351,7 @@ if __name__ == "__main__":
                         "value": None
                     },  # !
                     # "filter_by_accuracy": {"value": "True"}, # only relevant when `from_pretrained` is provided
-                    "model.n_layers": {"value": 2},
+                    # "model.n_layers": {"value": 2}, # NOTE
                     "model.positional_embedding_type": {"value": "rotary"},
                     ################################
                     # trainer parameters
@@ -397,6 +408,7 @@ if __name__ == "__main__":
                 this_sweep_config["parameters"] = this_sweep_config["parameters"].copy()
                 print("# ---- -------- new sweep ----")
                 for key, val in zip(keys, vals):
+                    # overwrite the params with new values from supplied config yaml file
                     this_sweep_config["parameters"][key] = {"value": val}
 
                 sweep_id = wandb.sweep(
@@ -424,11 +436,13 @@ if __name__ == "__main__":
                     | {"sweep_id": sweep_id}
                 ]
 
-            timestamp = datetime.now().strftime("%y-%m-%d")
+            timestamp = datetime.now().strftime("%y-%m-%d-%H-%M")
             print(*sweep_configs, sep="")
-            with open(
-                f"{config.wandb.from_config}_{timestamp}_sweep_dict.yaml", "w"
-            ) as f:
+            P = Path(
+                f"{config.wandb.from_config}_created_configs/{timestamp}_sweep_dict.yaml"
+            )
+            P.parent.mkdir(parents=False, exist_ok=True)
+            with P.open("w") as f:
                 yaml.dump(sweep_records, f)
 
         else:
