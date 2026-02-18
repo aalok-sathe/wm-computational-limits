@@ -175,7 +175,7 @@ def main(config: MainConfig):
         # if no seed is provided, we randomly pick from the list of models.
         if config.model.seed is not None:
             logger.info(
-                f"{config.model.seed = }. picking {config.model.seed % len(models_dir)}th model from {len(models_dir)} models"
+                f"{config.model.seed = }. picking {config.model.seed % len(models_dir)}th model from {len(models_dir)} models (post-filtering, if applicable)"
             )
             config.model.from_pretrained = str(
                 models_dir[config.model.seed % len(models_dir)]
@@ -290,8 +290,8 @@ if __name__ == "__main__":
         ############
         fixed_experimental_params = {
             "model.n_heads": {"value": 4},
-            "model.d_head": {"value": 512},
-            "model.d_model": {"value": 512},
+            "model.d_head": {"value": 256},
+            "model.d_model": {"value": 256},
             "model.seed": {
                 "values": [*map(str, range(42, 42 + 15))]
             },  # 15 random seeds; non-overlapping range with the seeds used for hparam sweep above
