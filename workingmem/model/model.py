@@ -5,13 +5,14 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 import logging
 import yaml
+import math
 
 # installed packages
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-from transformer_lens import HookedTransformer, HookedTransformerConfig
 
 import wandb
 
@@ -30,6 +31,14 @@ from workingmem.model.interface import (
 
 logger = logging.getLogger("workingmem")
 logger.setLevel(logging.DEBUG)
+
+# Constants for positional embedding types
+POSITIONAL_EMBEDDING_ROTARY = "rotary"
+POSITIONAL_EMBEDDING_STANDARD = "standard"
+POSITIONAL_EMBEDDING_NONE = None
+
+# Constant for MLP dimension check
+ATTENTION_ONLY_MLP_DIM = 0
 
 
 class ModelWrapper(ABC):
@@ -720,79 +729,354 @@ class ModelWrapper(ABC):
 
 
 class RNNModelWrapper(ModelWrapper):
-    """ """
+    """
+    RNN-based language model wrapper that is compatible with nnsight for interpretability.
+    The model architecture exposes individual components (embedding, rnn, output_layer) 
+    to enable easier access to activations when using nnsight tracing.
+    """
 
-    class _forward_overridden_RNN(torch.nn.RNN):
+    class _RNNCore(torch.nn.Module):
         """
-        overrides torch.nn.RNN to return only the output tensor, not the hidden state
-        so we can plug into the existing ModelWrapper interface
+        Core RNN module that returns only the output tensor, not the hidden state,
+        for compatibility with the existing ModelWrapper interface.
         """
-
+        def __init__(self, input_size, hidden_size, num_layers, batch_first, nonlinearity):
+            super().__init__()
+            self.rnn = torch.nn.RNN(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=batch_first,
+                nonlinearity=nonlinearity,
+                bidirectional=False,
+            )
+        
         def forward(self, input: torch.Tensor, hx: torch.Tensor = None) -> torch.Tensor:
-            output, hidden = super().forward(input, hx)
+            output, hidden = self.rnn(input, hx)
             return output
+
+    class _RNNLanguageModel(torch.nn.Module):
+        """
+        Complete RNN language model with exposed components for nnsight compatibility.
+        """
+        def __init__(self, vocab_size, d_model, hidden_size, num_layers, act_fn):
+            super().__init__()
+            self.embedding = torch.nn.Embedding(vocab_size, d_model)
+            self.rnn_core = RNNModelWrapper._RNNCore(
+                input_size=d_model,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                nonlinearity=act_fn,
+            )
+            self.output_layer = torch.nn.Linear(hidden_size, vocab_size)
+            
+            # Aliases for compatibility with existing freeze_embeddings code
+            self.embed = self.embedding
+            self.unembed = self.output_layer
+        
+        def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+            x = self.embedding(input_ids)
+            x = self.rnn_core(x)
+            logits = self.output_layer(x)
+            return logits
 
     def __init__(self, config: ModelConfig):
         super().__init__(config)
 
     def _init_model(self, config: ModelConfig):
         """
-        uses RNNConfig to initialize an RNN language model capable of using a word-level tokenizer's
-        input_ids as input, converting them to learnable embeddings, and passing them through an n-layer
-        RNN with a specified hidden size and model_dim (same as embed_dim), and finally projecting the outputs
-        back to the vocabulary space for language modeling.
-        uses boilerplate RNN code from pytorch wherever possible.
+        Initialize an RNN language model with exposed components for nnsight interpretability.
+        The model converts input_ids to embeddings, processes them through an RNN,
+        and projects to vocabulary space for language modeling.
+        
+        Components are exposed as: embedding, rnn_core, output_layer for easy access.
         """
-        self.model = torch.nn.Sequential(
-            torch.nn.Embedding(config.d_vocab, config.d_model),
-            self._forward_overridden_RNN(
-                input_size=config.d_model,
-                hidden_size=config.d_hidden,
-                num_layers=config.n_layers,
-                batch_first=True,
-                nonlinearity=config.act_fn,
-                bidirectional=False,
-            ),
-            torch.nn.Linear(config.d_hidden, config.d_vocab),
+        self.model = self._RNNLanguageModel(
+            vocab_size=config.d_vocab,
+            d_model=config.d_model,
+            hidden_size=config.d_hidden,
+            num_layers=config.n_layers,
+            act_fn=config.act_fn,
         )
 
 
 class LSTMModelWrapper(RNNModelWrapper):
-    class _forward_overridden_RNN(torch.nn.LSTM):
+    """
+    LSTM-based language model wrapper that is compatible with nnsight for interpretability.
+    The model architecture exposes individual components (embedding, lstm_core, output_layer)
+    to enable easier access to activations when using nnsight tracing.
+    """
+    
+    class _LSTMCore(torch.nn.Module):
         """
-        overrides torch.nn.RNN to return only the output tensor, not the hidden state
-        so we can plug into the existing ModelWrapper interface
+        Core LSTM module that returns only the output tensor, not the hidden states,
+        for compatibility with the existing ModelWrapper interface.
         """
-
+        def __init__(self, input_size, hidden_size, num_layers, batch_first):
+            super().__init__()
+            self.lstm = torch.nn.LSTM(
+                input_size=input_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=batch_first,
+                bidirectional=False,
+            )
+        
         def forward(self, input: torch.Tensor, hx: typing.Tuple = None) -> torch.Tensor:
-            output, (hidden, cell) = super().forward(input, hx)
+            output, (hidden, cell) = self.lstm(input, hx)
             return output
+
+    class _LSTMLanguageModel(torch.nn.Module):
+        """
+        Complete LSTM language model with exposed components for nnsight compatibility.
+        """
+        def __init__(self, vocab_size, d_model, hidden_size, num_layers):
+            super().__init__()
+            self.embedding = torch.nn.Embedding(vocab_size, d_model)
+            self.lstm_core = LSTMModelWrapper._LSTMCore(
+                input_size=d_model,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+            )
+            self.output_layer = torch.nn.Linear(hidden_size, vocab_size)
+            
+            # Aliases for compatibility with existing freeze_embeddings code
+            self.embed = self.embedding
+            self.unembed = self.output_layer
+        
+        def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+            x = self.embedding(input_ids)
+            x = self.lstm_core(x)
+            logits = self.output_layer(x)
+            return logits
 
     def __init__(self, config: ModelConfig):
         super().__init__(config)
 
     def _init_model(self, config: ModelConfig):
         """
-        uses RNNConfig to initialize an LSTM language model capable of using a word-level tokenizer's
-        input_ids as input, converting them to learnable embeddings, and passing them through an n-layer
-        LSTM with a specified hidden size and model_dim (same as embed_dim), and finally projecting the outputs
-        back to the vocabulary space for language modeling.
-        uses boilerplate LSTM code from pytorch wherever possible.
+        Initialize an LSTM language model with exposed components for nnsight interpretability.
+        The model converts input_ids to embeddings, processes them through an LSTM,
+        and projects to vocabulary space for language modeling.
+        
+        Components are exposed as: embedding, lstm_core, output_layer for easy access.
         """
-        self.model = torch.nn.Sequential(
-            torch.nn.Embedding(config.d_vocab, config.d_model),
-            self._forward_overridden_RNN(
-                input_size=config.d_model,
-                hidden_size=config.d_hidden,
-                num_layers=config.n_layers,
-                batch_first=True,
-                bidirectional=False,
-            ),
-            torch.nn.Linear(config.d_hidden, config.d_vocab),
+        self.model = self._LSTMLanguageModel(
+            vocab_size=config.d_vocab,
+            d_model=config.d_model,
+            hidden_size=config.d_hidden,
+            num_layers=config.n_layers,
         )
 
 
+class PositionalEncoding(nn.Module):
+    """Standard learned or sinusoidal positional encoding."""
+    
+    def __init__(self, d_model: int, max_len: int = 5000, learnable: bool = True):
+        super().__init__()
+        self.learnable = learnable
+        
+        if learnable:
+            # Learned positional embeddings
+            self.pos_embedding = nn.Embedding(max_len, d_model)
+        else:
+            # Sinusoidal positional encoding
+            pe = torch.zeros(max_len, d_model)
+            position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+            div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+            pe[:, 0::2] = torch.sin(position * div_term)
+            pe[:, 1::2] = torch.cos(position * div_term)
+            self.register_buffer('pe', pe)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Tensor of shape (batch_size, seq_len, d_model)
+        Returns:
+            Positional encodings of shape (batch_size, seq_len, d_model)
+        """
+        seq_len = x.size(1)
+        if self.learnable:
+            positions = torch.arange(seq_len, device=x.device).unsqueeze(0).expand(x.size(0), -1)
+            return self.pos_embedding(positions)
+        else:
+            return self.pe[:seq_len, :].unsqueeze(0).expand(x.size(0), -1, -1)
+
+
+class RotaryPositionalEmbedding(nn.Module):
+    """
+    Rotary Position Embedding (RoPE) as described in https://arxiv.org/abs/2104.09864
+    
+    Note: This implementation applies rotary embeddings to the full sequence embeddings.
+    For true RoPE behavior in multi-head attention, custom attention layers would be needed.
+    This implementation approximates RoPE by rotating the embeddings before passing to the transformer.
+    """
+    
+    def __init__(self, dim: int, max_len: int = 5000, base: int = 10000):
+        super().__init__()
+        self.dim = dim
+        self.max_len = max_len
+        self.base = base
+        
+        # Precompute the inverse frequencies
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer('inv_freq', inv_freq)
+        
+        # Cache for rotary embeddings
+        self._seq_len_cached = None
+        self._cos_cached = None
+        self._sin_cached = None
+    
+    def _update_cache(self, seq_len: int, device: torch.device):
+        """Update the cached cos/sin values if sequence length changed."""
+        if seq_len != self._seq_len_cached:
+            self._seq_len_cached = seq_len
+            t = torch.arange(seq_len, device=device).type_as(self.inv_freq)
+            freqs = torch.einsum('i,j->ij', t, self.inv_freq)
+            # Repeat frequencies for full dimension
+            emb = torch.cat((freqs, freqs), dim=-1)
+            # Add batch and head dimensions for broadcasting
+            self._cos_cached = emb.cos()
+            self._sin_cached = emb.sin()
+    
+    def rotate_half(self, x: torch.Tensor) -> torch.Tensor:
+        """Rotates half the hidden dims of the input."""
+        x1 = x[..., :x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2:]
+        return torch.cat((-x2, x1), dim=-1)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply rotary positional embedding to input tensor.
+        
+        Args:
+            x: Tensor of shape (batch_size, seq_len, d_model)
+        Returns:
+            Tensor with rotary embeddings applied, shape (batch_size, seq_len, d_model)
+        """
+        seq_len = x.shape[1]
+        self._update_cache(seq_len, x.device)
+        
+        # Apply rotary embedding
+        # Shape: (seq_len, d_model)
+        cos = self._cos_cached[:seq_len, :x.shape[-1]]
+        sin = self._sin_cached[:seq_len, :x.shape[-1]]
+        
+        # Broadcast to batch dimension
+        cos = cos.unsqueeze(0)  # (1, seq_len, d_model)
+        sin = sin.unsqueeze(0)  # (1, seq_len, d_model)
+        
+        # Apply rotation
+        x_rotated = (x * cos) + (self.rotate_half(x) * sin)
+        
+        return x_rotated
+
+
 class TransformerModelWrapper(ModelWrapper):
+    """
+    Transformer-based language model wrapper compatible with nnsight for interpretability.
+    Uses PyTorch's nn.Transformer as the core architecture, similar to RNN/LSTM implementations.
+    """
+    
+    class _TransformerLanguageModel(nn.Module):
+        """
+        Complete Transformer language model with exposed components for nnsight compatibility.
+        Supports multiple positional embedding types: standard (learned/sinusoidal), rotary, or none.
+        """
+        
+        def __init__(
+            self,
+            vocab_size: int,
+            d_model: int,
+            n_heads: int,
+            n_layers: int,
+            d_ff: int,
+            max_len: int,
+            act_fn: str = "relu",
+            positional_embedding_type: typing.Union[str, None] = "standard",
+        ):
+            super().__init__()
+            self.d_model = d_model
+            self.positional_embedding_type = positional_embedding_type
+            
+            # Token embedding
+            self.embedding = nn.Embedding(vocab_size, d_model)
+            
+            # Positional encoding
+            if positional_embedding_type == POSITIONAL_EMBEDDING_STANDARD:
+                self.pos_encoder = PositionalEncoding(d_model, max_len, learnable=True)
+            elif positional_embedding_type == POSITIONAL_EMBEDDING_ROTARY:
+                # For rotary embeddings, use full d_model dimension
+                self.pos_encoder = RotaryPositionalEmbedding(d_model, max_len)
+            elif positional_embedding_type is POSITIONAL_EMBEDDING_NONE:
+                self.pos_encoder = None
+            else:
+                raise ValueError(
+                    f"Unknown positional_embedding_type: {positional_embedding_type}. "
+                    f"Expected one of: {POSITIONAL_EMBEDDING_STANDARD}, {POSITIONAL_EMBEDDING_ROTARY}, or None"
+                )
+            
+            # Transformer encoder layers
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=n_heads,
+                dim_feedforward=d_ff,
+                activation=act_fn,
+                batch_first=True,
+                norm_first=False,
+            )
+            self.transformer_encoder = nn.TransformerEncoder(
+                encoder_layer,
+                num_layers=n_layers,
+            )
+            
+            # Output projection layer
+            self.output_layer = nn.Linear(d_model, vocab_size)
+            
+            # Aliases for compatibility with existing freeze_embeddings code
+            self.embed = self.embedding
+            self.unembed = self.output_layer
+            
+            # Initialize weights
+            self._init_weights()
+        
+        def _init_weights(self):
+            """Initialize weights using Xavier/Glorot initialization."""
+            for p in self.parameters():
+                if p.dim() > 1:
+                    nn.init.xavier_uniform_(p)
+        
+        def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+            """
+            Forward pass through the transformer.
+            
+            Args:
+                input_ids: Tensor of shape (batch_size, seq_len)
+            Returns:
+                Logits of shape (batch_size, seq_len, vocab_size)
+            """
+            # Embed tokens
+            x = self.embedding(input_ids) * math.sqrt(self.d_model)
+            
+            # Add positional encoding
+            if self.pos_encoder is not None:
+                pos_enc = self.pos_encoder(x)
+                x = x + pos_enc
+            
+            # Create causal mask for autoregressive generation
+            seq_len = input_ids.size(1)
+            mask = nn.Transformer.generate_square_subsequent_mask(seq_len, device=input_ids.device)
+            
+            # Pass through transformer encoder
+            x = self.transformer_encoder(x, mask=mask, is_causal=True)
+            
+            # Project to vocabulary
+            logits = self.output_layer(x)
+            
+            return logits
+
     def __init__(
         self,
         config: ModelConfig,
@@ -800,26 +1084,30 @@ class TransformerModelWrapper(ModelWrapper):
         super().__init__(config)
 
     def _init_model(self, config: ModelConfig):
-        # Only pass fields that HookedTransformerConfig actually accepts, and
-        # continue to exclude fields that are not constructor arguments.
-        config_dict = dataclasses.asdict(config)
-        allowed_fields = HookedTransformerConfig.__dataclass_fields__.keys()
-        hooked_config_kwargs = {
-            k: v
-            for k, v in config_dict.items()
-            if k in allowed_fields and k not in ("from_pretrained", "positional_embedding_type")
-        }
-        hookedtfm_config = HookedTransformerConfig(
-            # d_head=config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
-            positional_embedding_type=(config.positional_embedding_type or "standard"),
-            **hooked_config_kwargs,
+        """
+        Initialize a bare-bones Transformer model using PyTorch's nn.Transformer.
+        This implementation is general-purpose and not tied to any specific architecture
+        like GPT-2, similar to how RNN and LSTM models are implemented.
+        
+        Supports multiple positional embedding types:
+        - "standard": Learned positional embeddings
+        - "rotary": Rotary Position Embeddings (RoPE)
+        - None: No positional embeddings
+        """
+        # Determine feedforward dimension
+        # For attention-only models (d_mlp == 0), use 4 * d_model as default
+        d_ff = config.d_mlp if config.d_mlp > ATTENTION_ONLY_MLP_DIM else 4 * config.d_model
+        
+        self.model = self._TransformerLanguageModel(
+            vocab_size=config.d_vocab,
+            d_model=config.d_model,
+            n_heads=config.n_heads,
+            n_layers=config.n_layers,
+            d_ff=d_ff,
+            max_len=config.n_ctx,
+            act_fn=config.act_fn,
+            positional_embedding_type=config.positional_embedding_type,
         )
-        self.model = HookedTransformer(hookedtfm_config)
-
-        # only makes sense to deactivate positional embeddings at initialization
-        # if applicable (only for Transformer models)
-        if config.positional_embedding_type is None:
-            self._deactivate_positional_embeddings()
 
     def load_state_dict(
         self,
@@ -827,31 +1115,20 @@ class TransformerModelWrapper(ModelWrapper):
         _config: ModelConfig = None,
     ):
         """
-        we wrap the standard `load_and_process_state_dict` method of HookedTransformer to
-        make the interface consistent with AbstractPytorchModel which expects a `load_state_dict`
-        method implementation.
+        Load state dict into the transformer model.
+        Uses standard PyTorch load_state_dict.
         """
-        self.model.load_and_process_state_dict(
-            state_dict,
-            center_unembed=True,  # this shifts the unembedding matrix weights to be centered around 0
-            center_writing_weights=True,  # this shifts the weights written to residual stream to be centered around 0
-            fold_ln=False,
-            # refactor_factored_attn_matrices=True,
-        )
-
-        # if checkpoint to be loaded has no positional embedding, set the positional embedding weight matrix to
-        # zeroes and set grad off.
-        if _config is not None and _config.positional_embedding_type is None:
-            self._deactivate_positional_embeddings()
+        self.model.load_state_dict(state_dict)
 
     def _deactivate_positional_embeddings(self) -> None:
         """
-        Deactivates the positional embedding in the model by setting its weights to zero
-        and freezing the gradient updates for the positional embedding parameters.
-        This method modifies the `W_pos` attribute of the `pos_embed` module in the model:
-        - sets all values in `W_pos` to 0.0.
-        - disables gradient computation for `W_pos` by setting `requires_grad` to False.
-        source: https://colab.research.google.com/github/TransformerLensOrg/TransformerLens/blob/main/demos/No_Position_Experiment.ipynb#scrollTo=fVWrVHo9y0T2
+        Deactivates the positional embedding by setting its weights to zero
+        and freezing gradient updates.
+        This method should only be called when positional_embedding_type is None
+        at initialization, but can be used to zero out embeddings post-hoc.
         """
-        self.model.pos_embed.W_pos.data[:] = 0.0
-        self.model.pos_embed.W_pos.requires_grad = False
+        if hasattr(self.model, 'pos_encoder') and self.model.pos_encoder is not None:
+            if isinstance(self.model.pos_encoder, PositionalEncoding):
+                if self.model.pos_encoder.learnable:
+                    self.model.pos_encoder.pos_embedding.weight.data[:] = 0.0
+                    self.model.pos_encoder.pos_embedding.weight.requires_grad = False
