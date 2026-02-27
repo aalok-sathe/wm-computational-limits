@@ -46,6 +46,9 @@ class GeneratedCachedDatasetConfig:
     """whether to generate the dataset if it doesn't already exist on disk,
        or simply to initialize it to enable calling `generate_trial_sequence`"""
     load: bool = True
+    """should we load the created dataset? defaults to yes."""
+    create_dataset_and_exit: bool = False
+    """if passed, this invocation will serve only for the purpose of creating a dataset and no model training"""
 
 
 class SupportsGetitem(typing.Protocol):
@@ -215,6 +218,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
                     "rootdir",
                     "split",
                     "generate",
+                    "create_dataset_and_exit",
                     # "local_split_set_control",
                 )  # NOTE! local split set control is here for now.
             ]
@@ -227,7 +231,7 @@ class GeneratedCachedDataset(ABC, torch.utils.data.Dataset):
         creates a stringified identity of the dataset for storing on disk
         """
         _, H = self._attr_str_hash()
-        return f"{self.__class__.__name__}_{H}"
+        return f"{self.__class__.__name__}_{H}_concurrent={self.config.concurrent_reg}_td={self.config.td_prob}"
 
     def __repr__(self):
         """
