@@ -74,7 +74,7 @@ class ModelConfig:
 
 @dataclasses.dataclass
 class TrainingConfig:
-    freeze_embeddings: bool = None
+    freeze_embeddings: typing.Union[bool, None] = None
     epochs: int = 60
     optimizer: str = "adamw"
     learning_rate: float = 4e-4
@@ -87,7 +87,7 @@ class TrainingConfig:
     # e.g. `model_checkpoints/{sweep_id}/{run_name}/`
     checkpoint_dir: typing.Union[str, None] = "model_checkpoints/"
     batch_size: int = 128
-    seed: int = None
+    seed: typing.Union[int, None] = None
 
     logging_strategy: str = "epoch"  # log every X epochs or X steps?
     logging_steps: int = 1  # log every X epochs/steps
@@ -100,11 +100,11 @@ class TrainingConfig:
     # 'epoch' saves a checkpoint at the end of each epoch named 'epoch_{epoch}.pth' in a subdirectory called 'checkpoints/'
     save_strategy: typing.Literal["best", "epoch"] = "best"
     # if strategy is 'epoch', then we save every X epochs determined by `save_steps`
-    save_steps: int = None
+    save_steps: typing.Union[int, None] = None
 
     do_test: bool = True  # evaluate the model on the test set after training?
 
-    mask_answer_tokens: bool = None  # whether we train the model using answer tokens in the input sequence or not
+    mask_answer_tokens: bool = True  # whether we train the model using answer tokens in the input sequence or not
 
 
 @dataclasses.dataclass
