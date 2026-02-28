@@ -45,7 +45,7 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-7.4.1c1_pt"
+    project_name: str = "wm-comp-limit-7.4.2"
     # method: str = "bayes"  # use this for a hparam sweep
     method: str = "grid"  # use this once hparams are fixed
     metric: dict = dataclasses.field(
@@ -110,11 +110,14 @@ def main(config: MainConfig):
         f"OVERRIDE {supplied_batch_size=}: starting with {config.trainer.batch_size} to search over the memory limit"
     )
     logger.info(f"running main with config: {config}")
-    wandb.init(
-        project=config.wandb.project_name,
-        config=config,
-        dir=str(Path("~/scratch/wandb").expanduser().resolve()),
-    )
+    if config.dataset.create_dataset_and_exit:
+        pass  # no need to initiate a w&b run for this
+    else:
+        wandb.init(
+            project=config.wandb.project_name,
+            config=config,
+            dir=str(Path("~/scratch/wandb").expanduser().resolve()),
+        )
 
     # set up the dataset
     logger.info("loading datasets")
@@ -132,6 +135,10 @@ def main(config: MainConfig):
     print_gpu_mem(train_dataset)
     print_gpu_mem(eval_dataset)
     print_gpu_mem(test_dataset)
+
+    if config.dataset.create_dataset_and_exit:
+        logger.info("STOP after creating dataset")
+        exit()
 
     # set up the model
     logger.info("initializing model")
