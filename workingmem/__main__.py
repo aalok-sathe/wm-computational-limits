@@ -334,7 +334,7 @@ if __name__ == "__main__":
             with (Path(__file__).parent.parent / "scripts/template_run_sweep.sh").open(
                 "r"
             ) as f:
-                script_template = f.read()
+                script_template_header = f.read()
 
             # for each of the variables (keys) in this config, we want to do
             # a product of all possible values each variable takes
@@ -355,11 +355,11 @@ if __name__ == "__main__":
                 sweep_id = wandb.sweep(
                     this_sweep_config, project=config.wandb.project_name
                 )
-                bash_template = f"python3 -m workingmem --wandb.run_sweep --wandb.sweep_id {wandbapi.viewer.username}/{config.wandb.project_name}/{sweep_id}"
+                python_command = f"python3 -m workingmem --wandb.run_sweep --wandb.sweep_id {wandbapi.viewer.username}/{config.wandb.project_name}/{sweep_id}"
 
                 # what makes this sweep special?
                 sweep_commands.append(
-                    script_template
+                    script_template_header
                     + "\n"
                     + "# "
                     + " ".join(
@@ -373,7 +373,7 @@ if __name__ == "__main__":
                         := f"https://wandb.ai/{wandbapi.viewer.username}/{config.wandb.project_name}/{sweep_id}"
                     )
                     + "\n"
-                    + bash_template
+                    + python_command
                     + "\n"
                 )
                 sweep_records += [
@@ -402,8 +402,29 @@ if __name__ == "__main__":
                 )
                 S.parent.mkdir(parents=True, exist_ok=True)
                 with S.open("w") as f:
-                    f.write(sweep_command.format(batch_output_prefix=str(S.parent)))
+                    f.write(
+                        sweep_command.format(batch_output_prefix=str(S.parent) + "/")
+                    )
                 (S.parent / "batch_output").mkdir(exist_ok=True)
+
+            S = Path(
+                f"{config.wandb.from_config}_experiments/scripts/RUN_ALL_{timestamp}.sh"
+            )
+            with S.open("w") as f:
+                f.write(
+                    "\n".join(
+                        [
+                            "#!/bin/bash\n",
+                            f"for script in {config.wandb.from_config}_experiments/scripts/{timestamp}_*.sh; do",
+                            '\tif [ -f "$script" ]; then',
+                            '\t\tsbatch "$script"',
+                            "\telse",
+                            f'\t\techo "No scripts found matching pattern: {config.wandb.from_config}_experiments/scripts/{timestamp}_*.sh"',
+                            "\tfi",
+                            "done",
+                        ]
+                    )
+                )
 
         else:
             sweep_id = wandb.sweep(sweep_config, project=config.wandb.project_name)
