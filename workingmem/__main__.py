@@ -80,6 +80,13 @@ class MainConfig:
     filter_by_accuracy: bool = None
     filter_by_accuracy_threshold: float = 0.7
 
+    # names of partitions to utilize in submitting jobs to. we will uniformly alternate
+    # between them for each condition we construct
+    gpu_partition_names: typing.Tuple[str] = (
+        "3090-gcondo",
+        "gpu --account=carney-frankmj-condo",
+    )
+
     def __post_init__(self):
         logger.info(f"running post-init hook to set seeds to {self.seed}")
         if self.seed is not None:
@@ -370,7 +377,7 @@ if __name__ == "__main__":
                     + "\n# "
                     + (
                         sweep_url
-                        := f"https://wandb.ai/{wandbapi.viewer.username}/{config.wandb.project_name}/{sweep_id}"
+                        := f"https://wandb.ai/{wandbapi.viewer.username}/{config.wandb.project_name}/sweeps/{sweep_id}"
                     )
                     + "\n"
                     + python_command
@@ -403,7 +410,12 @@ if __name__ == "__main__":
                 S.parent.mkdir(parents=True, exist_ok=True)
                 with S.open("w") as f:
                     f.write(
-                        sweep_command.format(batch_output_prefix=str(S.parent) + "/")
+                        sweep_command.format(
+                            batch_output_prefix=str(S.parent) + "/",
+                            slurm_partition_argument=config.gpu_partition_names[
+                                ix % len(config.gpu_partition_names)
+                            ],
+                        )
                     )
                 (S.parent / "batch_output").mkdir(exist_ok=True)
 

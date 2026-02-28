@@ -1,12 +1,11 @@
 #!/bin/bash
-#SBATCH --mail-user=aalok_sathe+wandb.ai@brown.edu
+#SBATCH --mail-user=chmosky@duck.com
 #SBATCH --mail-type=ALL
 
 #SBATCH --mem-per-cpu 64G
-# Request a GPU partition node and access to 1 GPU
 
-#SBATCH -p 3090-gcondo --gres=gpu:1
-#SBATCH -p gpu --gres=gpu:1 --account=carney-frankmj-condo
+# Request a GPU partition node and access to 1 GPU
+#SBATCH -p {slurm_partition_argument} --gres=gpu:1
 
 #SBATCH -a 1-10%15
 #SBATCH -t 2-00:00:00
