@@ -1,5 +1,5 @@
 [project]
-name = "wm_limits"
+name = "wm_computational_limits"
 version = "0.1.0"
 description = "Investigating the nature of working memory limitations using computational modeling."
 readme = "README.md"
@@ -35,3 +35,5 @@ packages = ['workingmem']
 
 [tool.ruff]
 # line-length = 90
+
+[tool.uv.sources]

@@ -30,7 +30,7 @@ from workingmem.model import (
     LSTMModelWrapper,
 )
 from workingmem.task import SIRDataset, SIRConfig
-from workingmem.utils import print_gpu_mem
+from workingmem.utils import parse_config, print_gpu_mem, wandbapi
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
@@ -45,7 +45,7 @@ class WandbConfig:
     create_sweep: bool = False
     run_sweep: bool = False
     sweep_id: str = None  # required if do_sweep is True
-    project_name: str = "wm-comp-limit-7.3.2c0"
+    project_name: str = "wm-comp-limit-7.4.2"
     # method: str = "bayes"  # use this for a hparam sweep
     method: str = "grid"  # use this once hparams are fixed
     metric: dict = dataclasses.field(
@@ -78,6 +78,14 @@ class MainConfig:
     seed = None
     array_task_id: typing.Union[int, None] = None
     filter_by_accuracy: bool = None
+    filter_by_accuracy_threshold: float = 0.7
+
+    # names of partitions to utilize in submitting jobs to. we will uniformly alternate
+    # between them for each condition we construct
+    gpu_partition_names: typing.Tuple[str] = (
+        "3090-gcondo",
+        "gpu --account=carney-frankmj-condo",
+    )
 
     def __post_init__(self):
         logger.info(f"running post-init hook to set seeds to {self.seed}")
@@ -109,11 +117,14 @@ def main(config: MainConfig):
         f"OVERRIDE {supplied_batch_size=}: starting with {config.trainer.batch_size} to search over the memory limit"
     )
     logger.info(f"running main with config: {config}")
-    wandb.init(
-        project=config.wandb.project_name,
-        config=config,
-        dir=str(Path("~/scratch/wandb").expanduser().resolve()),
-    )
+    if config.dataset.create_dataset_and_exit:
+        pass  # no need to initiate a w&b run for this
+    else:
+        wandb.init(
+            project=config.wandb.project_name,
+            config=config,
+            dir=str(Path("~/scratch/wandb").expanduser().resolve()),
+        )
 
     # set up the dataset
     logger.info("loading datasets")
@@ -131,6 +142,10 @@ def main(config: MainConfig):
     print_gpu_mem(train_dataset)
     print_gpu_mem(eval_dataset)
     print_gpu_mem(test_dataset)
+
+    if config.dataset.create_dataset_and_exit:
+        logger.info("STOP after creating dataset")
+        exit()
 
     # set up the model
     logger.info("initializing model")
@@ -155,8 +170,10 @@ def main(config: MainConfig):
         )
 
         if config.filter_by_accuracy:
+            threshold: float = config.filter_by_accuracy_threshold
+
             # filter models by the accuracy recorded in their history
-            def filter_by_accuracy(m: Path, threshold=0.95) -> bool:
+            def filter_by_accuracy(m: Path, threshold=threshold) -> bool:
                 with open(m / "history.yaml", "r") as f:
                     history = yaml.load(f, Loader=yaml.FullLoader)
                 return history[-1]["eval_acc"] >= threshold
@@ -164,7 +181,7 @@ def main(config: MainConfig):
             prev_len = len(models_dir)
             models_dir = list(filter(filter_by_accuracy, models_dir))
             logger.info(
-                f"filtering models by accuracy >= .99 in {models_dir}. {prev_len = }, {len(models_dir) = }"
+                f"filtering models by accuracy >= {threshold} in {models_dir}. {prev_len = }, {len(models_dir) = }"
             )
 
         # set `from_pretrained` path to one of the pretrained models after filtering for its end accuracy.
@@ -172,7 +189,7 @@ def main(config: MainConfig):
         # if no seed is provided, we randomly pick from the list of models.
         if config.model.seed is not None:
             logger.info(
-                f"{config.model.seed = }. picking {config.model.seed % len(models_dir)}th model from {len(models_dir)} models"
+                f"{config.model.seed = }. picking {config.model.seed % len(models_dir)}th model from {len(models_dir)} models (post-filtering, if applicable)"
             )
             config.model.from_pretrained = str(
                 models_dir[config.model.seed % len(models_dir)]
@@ -266,14 +283,15 @@ if __name__ == "__main__":
         # parameters to use when we want to optimize hyperparameters before fixing them for experimentation
         ############
         hparam_optimization_params = {
-            "model.n_heads": {"values": [2, 4, 6]},
+            # "model.n_heads": {"values": [2, 4, 6]},
+            "model.n_layers": {"values": [1, 2]},
             "model.d_model": {"values": [64, 128, 256, 512]},
-            "model.d_head": {"values": [64, 128, 256, 512]},
+            "model.d_hidden": {"values": [64, 128, 256, 512]},
             # we use a smaller range of seeds just to make sure out hparams aren't overly seed-specific.
             # TODO: this should actually be set to `None` at optimization-time so the sweep doesn't overfit
             # to a particular subset of seeds (there is unfortunately no way to fully exclude the random seed
             # from sweep parameters)
-            "model.seed": {"values": [*map(str, range(62, 67))]},
+            "model.seed": {"values": [*map(str, range(162, 167))]},
             "trainer.learning_rate": {
                 "min": 1e-6,
                 "max": 1e-2,
@@ -285,13 +303,17 @@ if __name__ == "__main__":
         # NOTE: change these based on the outcomes of the hparam optimization sweep above!
         ############
         fixed_experimental_params = {
-            "model.n_heads": {"value": 4},
-            "model.d_head": {"value": 256},
-            "model.d_model": {"value": 256},
             "model.seed": {
                 "values": [*map(str, range(42, 42 + 15))]
             },  # 15 random seeds; non-overlapping range with the seeds used for hparam sweep above
-            "trainer.learning_rate": {"value": 2.2e-4},
+            # rnn x n_back
+            # "trainer.learning_rate": {"value": 2e-4},
+            # # rnn x ref_back
+            # "trainer.learning_rate": {"value": 2e-4},
+            # # lstm x n_back
+            # "trainer.learning_rate": {"value": 3e-4},
+            # # lstm x ref_back
+            # "trainer.learning_rate": {"value": 1e-3},
         }
         ############
 
@@ -307,76 +329,7 @@ if __name__ == "__main__":
                 "parameters": {
                     **which_params_to_use,  # use either hparam optimization or fixed params
                     ################################
-                    # generally often-changing params
-                    # NOTE don't forget to change 'bayes' to 'grid' following initial hparam sweep
-                    ################################
-                    # sparsity of feedback (loss) over training
-                    "trainer.sparsity": {"value": 0.0},
-                    "dataset.concurrent_reg": {"value": 4},
-                    "dataset.global_split_set_control": {
-                        "value": "False",
-                        # "value": "True",
-                    },  #!!!
-                    "dataset.heldout_items_per_reg": {"value": 15},
-                    "dataset.td_prob": {"values": [0, 1]},
-                    "dataset.role_n_congruence": {"values": [0, 1]},
-                    "dataset.n_back": {"value": 4},
-                    ################################
-                    #                              #
-                    #                              #
-                    #                              #
-                    ################################################################
-                    # global experiment parameters that are generally fixed
-                    ################################################################
-                    #
-                    ################################
-                    # model parameters
-                    ################################
-                    "model.from_pretrained": {
-                        # "value": "model_checkpoints/evcxg3kc/"  # n_reg 50 exposure task
-                        # "value": "model_checkpoints/b931g4g8"  # split set false
-                        # "value": "model_checkpoints/nxgusfzl"  # split set true
-                        # "value": "model_checkpoints/qc820c8e"  # 100_2 task, 256 item, 128 concurrent
-                        "value": None
-                    },  # !
                     # "filter_by_accuracy": {"value": "True"}, # only relevant when `from_pretrained` is provided
-                    "model.n_layers": {"value": 2},
-                    "model.positional_embedding_type": {"value": "rotary"},
-                    ################################
-                    # trainer parameters
-                    ################################
-                    "trainer.mask_answer_tokens": {"value": "True"},
-                    "trainer.freeze_embeddings": {"value": "False"},
-                    # "trainer.freeze_attention": {"value": "False"},  # NOTE: NOT IMPLEMENTED
-                    # "trainer.batch_size": {"value": 16}, # now this is automatically determined so we don't parameterize it
-                    "trainer.epochs": {"value": 60},
-                    "trainer.weight_decay": {"value": 0.0},
-                    "trainer.checkpoint_dir": {"value": "model_checkpoints/"},
-                    ################################
-                    # dataset parameters
-                    ################################
-                    "dataset.seq_len": {"value": 200},
-                    "dataset.n_reg": {"value": 50},
-                    "dataset.n_train": {"value": 100_000},
-                    # this was changed from 4 to 128 to accommodate split set control for
-                    # 64 concurrent registers (doing split set control requires at least 2 items
-                    # within each trial sequence that are fixed to a single register). but then, we
-                    # observed an increased propensity of networks to engage in heuristic solutions
-                    #
-                    "dataset.concurrent_items": {"value": 4},
-                    "dataset.n_val": {"value": 1_000},
-                    "dataset.n_test": {"value": 1_000},
-                    "dataset.n_items": {"value": 50},
-                    # local split set is supposed to be a version of split set control where the split set
-                    # is determined on a per-trial-sequence basis rather than at the dataset level.
-                    # it's unclear if that should have any effect on the model performance. but incorporating
-                    # this condition will help us understand if the 'concurrent management' we are thinking
-                    # of actually works the way we think it works (at the trial sequence level).
-                    # if local split set works closer to the normal (critical) condition, it doesn't,
-                    # "dataset.local_split_set_control": {"value": "False"},  # NOTE: NOT IMPLEMENTED
-                    "dataset.heldout_reg": {"value": 0},
-                    "dataset.heldout_items": {"value": 0},
-                    "dataset.ignore_prob": {"value": 0.0},
                 },
             },
         )
@@ -385,51 +338,105 @@ if __name__ == "__main__":
             # read the YAML file
             with open(config.wandb.from_config, "r") as f:
                 from_config_params = yaml.load(f, Loader=yaml.FullLoader)
+            with (Path(__file__).parent.parent / "scripts/template_run_sweep.sh").open(
+                "r"
+            ) as f:
+                script_template_header = f.read()
+
             # for each of the variables (keys) in this config, we want to do
             # a product of all possible values each variable takes
             sweep_records = []
-            sweep_configs = []
-            from itertools import product
+            sweep_commands = []
 
-            keys, values = zip(*from_config_params.items())
-            for vals in product(*values):
+            for param_set in parse_config(from_config_params):
                 this_sweep_config = sweep_config.copy()
                 this_sweep_config["parameters"] = this_sweep_config["parameters"].copy()
+
                 print("# ---- -------- new sweep ----")
-                for key, val in zip(keys, vals):
+                for key, val in param_set.items():
+                    # overwrite the params with new values from supplied config yaml file
                     this_sweep_config["parameters"][key] = {"value": val}
+
+                this_cumulative_param_set = this_sweep_config["parameters"]
 
                 sweep_id = wandb.sweep(
                     this_sweep_config, project=config.wandb.project_name
                 )
-                bash_template = f"python3 -m workingmem --wandb.run_sweep --wandb.sweep_id aloxatel/{config.wandb.project_name}/{sweep_id}"
+                python_command = f"python3 -m workingmem --wandb.run_sweep --wandb.sweep_id {wandbapi.viewer.username}/{config.wandb.project_name}/{sweep_id}"
+
                 # what makes this sweep special?
-                sweep_configs.append(
-                    "# "
+                sweep_commands.append(
+                    script_template_header
+                    + "\n"
+                    + "# "
                     + " ".join(
                         f"{k}={v}"
-                        for k, v in zip(keys, vals)
+                        for k, v in param_set.items()
                         if k in this_sweep_config["parameters"]
                     )
                     + "\n# "
-                    + bash_template
+                    + (
+                        sweep_url
+                        := f"https://wandb.ai/{wandbapi.viewer.username}/{config.wandb.project_name}/sweeps/{sweep_id}"
+                    )
+                    + "\n"
+                    + python_command
                     + "\n"
                 )
                 sweep_records += [
                     {
                         k: v
-                        for k, v in zip(keys, vals)
+                        for k, v in this_cumulative_param_set.items()
                         if k in this_sweep_config["parameters"]
                     }
+                    | {"username": wandbapi.viewer.username}
                     | {"sweep_id": sweep_id}
+                    | {"project_id": config.wandb.project_name}
+                    | {"sweep_url": sweep_url}
                 ]
 
-            timestamp = datetime.now().strftime("%y-%m-%d")
-            print(*sweep_configs, sep="")
-            with open(
-                f"{config.wandb.from_config}_{timestamp}_sweep_dict.yaml", "w"
-            ) as f:
+            timestamp = datetime.now().strftime("%y-%m-%d-%H-%M")
+            P = Path(
+                f"{config.wandb.from_config}_experiments/created_configs/{timestamp}_sweep_dict.yaml"
+            )
+            P.parent.mkdir(parents=True, exist_ok=True)
+            with P.open("w") as f:
                 yaml.dump(sweep_records, f)
+
+            for ix, sweep_command in enumerate(sweep_commands):
+                S = Path(
+                    f"{config.wandb.from_config}_experiments/scripts/{timestamp}_{ix}.sh"
+                )
+                S.parent.mkdir(parents=True, exist_ok=True)
+                with S.open("w") as f:
+                    f.write(
+                        sweep_command.format(
+                            batch_output_prefix=str(S.parent) + "/",
+                            slurm_partition_argument=config.gpu_partition_names[
+                                ix % len(config.gpu_partition_names)
+                            ],
+                        )
+                    )
+                (S.parent / "batch_output").mkdir(exist_ok=True)
+
+            S = Path(
+                f"{config.wandb.from_config}_experiments/scripts/RUN_ALL_{timestamp}.sh"
+            )
+            with S.open("w") as f:
+                f.write(
+                    "\n".join(
+                        [
+                            "#!/bin/bash\n",
+                            f"for script in {config.wandb.from_config}_experiments/scripts/{timestamp}_*.sh; do",
+                            '\tif [ -f "$script" ]; then',
+                            '\t\tsbatch "$script"',
+                            "\telse",
+                            f'\t\techo "No scripts found matching pattern: {config.wandb.from_config}_experiments/scripts/{timestamp}_*.sh"',
+                            "\tfi",
+                            "done",
+                        ]
+                    )
+                )
 
         else:
             sweep_id = wandb.sweep(sweep_config, project=config.wandb.project_name)
