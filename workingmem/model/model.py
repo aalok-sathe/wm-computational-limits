@@ -41,9 +41,6 @@ POSITIONAL_EMBEDDING_ROTARY = "rotary"
 POSITIONAL_EMBEDDING_STANDARD = "standard"
 POSITIONAL_EMBEDDING_NONE = None
 
-# Constant for MLP dimension check
-ATTENTION_ONLY_MLP_DIM = 0
-
 
 class ModelWrapper(ABC):
     """
@@ -901,8 +898,8 @@ class TransformerModelWrapper(ModelWrapper):
             n_layers: int,
             d_ff: int,
             max_len: int,
+            positional_embedding_type: typing.Union[str, None],
             act_fn: str = "relu",
-            positional_embedding_type: typing.Union[str, None] = "standard",
         ):
             super().__init__()
             self.d_model = d_model
@@ -1003,20 +1000,13 @@ class TransformerModelWrapper(ModelWrapper):
         - "rotary": Rotary Position Embeddings (RoPE)
         - None: No positional embeddings
         """
-        # Determine feedforward dimension
-        # For attention-only models (d_mlp == 0), use 4 * d_model as default
-        d_ff = (
-            config.d_mlp
-            if config.d_mlp > ATTENTION_ONLY_MLP_DIM
-            else 4 * config.d_model
-        )
 
         self.model = self._TransformerLanguageModel(
             vocab_size=config.d_vocab,
             d_model=config.d_model,
             n_heads=config.n_heads,
             n_layers=config.n_layers,
-            d_ff=d_ff,
+            d_ff=config.d_mlp,
             max_len=config.n_ctx,
             act_fn=config.act_fn,
             positional_embedding_type=config.positional_embedding_type,
