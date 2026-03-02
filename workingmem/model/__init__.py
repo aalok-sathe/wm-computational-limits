@@ -10,8 +10,5 @@ from workingmem.model.model import (
     # TransformerConfig,
     # RNNConfig,
     #
-    HookedTransformer,
-    HookedTransformerConfig,
-    #
     TrainingConfig,
 )

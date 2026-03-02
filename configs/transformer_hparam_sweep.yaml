@@ -10,11 +10,16 @@
 # between the values.
 
 independent_variables:
+  # wandb
+  - wandb.method: ['bayes']
+  # dataset
   - dataset.td_prob: [0]
   - dataset.role_n_congruence: [0]
-  - dataset.n_back: [3,4,5,6]
-    dataset.concurrent_reg: [3,4,5,6]
-  - model.model_class: ['lstm', 'transformer']
+  - dataset.n_back: [3]
+    dataset.concurrent_reg: [3]
+  # model
+  - model.model_class: ['transformer']
+  # trainer
 
 
 #### conditional variables
@@ -39,12 +44,5 @@ independent_variables:
 conditional_variables:
   - index:
       model.model_class: 'transformer'
-      dataset.td_prob: 0 
     kwargs:
-      trainer.learning_rate: 2.2e-4
       model.positional_embedding_type: rotary
-  - index:
-      model.model_class: 'lstm'
-      dataset.td_prob: 0 
-    kwargs:
-      trainer.learning_rate: 1e-3
