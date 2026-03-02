@@ -40,7 +40,7 @@ class ModelConfig:
     """
 
     n_layers: int = 2
-    d_model: int = 256  # dimensionality of the residual stream / embeddings, appropriately defined for each model
+    d_model: int = 512  # dimensionality of the residual stream / embeddings, appropriately defined for each model
     init_weights: bool = True  # whether or not to initialize weights
     seed: typing.Union[int, str, None] = (
         None  # seeds passed as str must be convertible to int, e.g. "42" or "1234" via a simple cast: `int("42")`
@@ -56,7 +56,7 @@ class ModelConfig:
     # model_class: str = "transformer"
 
     attn_only: bool = True
-    n_heads: int = 2
+    n_heads: int = 4
     n_ctx: int = 1205  # this should be set so that it is longer than the longest trial sequence length we expect to use with the model. i.e., 4 * seq_len + change. for 300, we need at least 1201.
     d_head: int = 128
     d_mlp: int = 0
