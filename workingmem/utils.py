@@ -2,6 +2,8 @@
 from pandas.core.frame import DataFrame
 
 from itertools import product
+from collections import defaultdict
+
 import typing
 from functools import lru_cache
 import logging
@@ -221,3 +223,95 @@ def parse_config(config) -> typing.Generator[dict, None, None]:
         keys, values = zip(*config.items())
         for this_values_set in product(*values):
             yield dict(zip(keys, this_values_set))
+
+
+def annotate_trial_seq(
+    preds: typing.List[str], labels: typing.List[str], trial_seq: str
+) -> pd.DataFrame:
+    """
+    processes trials of type (instr role_n item_m ans) where instr is one of St/Ig standing for
+    store or ignore. first, we compile a unique list of roles appearing in this trial
+    then we create a state (dict) mapping each role to the item it currently stores. at each trial,
+    if the instruction is 'store', we update the state to store the item for that role.
+    also in the state, we store the time elapsed since last accessing that role for any instruction,
+    as well as last _updating_ that role (i.e., St instruction). we also annotate the current trial's
+    answer (same/diff) as well as whether the model got the prediction right (preds vs labels).
+    """
+    trial_seq: typing.List[str] = trial_seq.split()
+    roles = set()
+    for token in trial_seq:
+        if token.startswith("reg_"):
+            roles.add(token)
+    state = defaultdict(
+        lambda: dict(time_since_access=-1, time_since_update=-1, num_accesses=0)
+    )
+    annotated_seq = []
+    for i in range(0, len(trial_seq), 4):
+        instr, role, item, ans = trial_seq[i : i + 4]
+
+        for r in roles:
+            if r == role:
+                state[r]["num_accesses"] += 1
+                continue
+            if state[r]["time_since_access"] >= 0:
+                state[r]["time_since_access"] += 1
+            if state[r]["time_since_update"] >= 0:
+                state[r]["time_since_update"] += 1
+
+        annotated_seq.append(
+            {
+                "trial_ix": i // 4,
+                "instr": instr,
+                "role": role,
+                "item": item,
+                "ans": ans,
+                "correct": int(preds[i // 4] == labels[i // 4]),
+                "label": labels[i // 4],
+                **state[role].copy(),
+            }
+        )
+        state[role]["time_since_access"] = 0
+        if instr == "St":
+            state[role]["time_since_update"] = 0
+
+    return pd.DataFrame(annotated_seq)
+
+
+def load_model_and_dataset(ckpt_path, split="test"):
+    """
+    given a checkpoint path, load the model and the corresponding dataset it was most
+    recently trained on. we can infer the model class from the config.yaml file
+    in the checkpoint directory, and we can infer the dataset path from the
+    history.yaml file in the checkpoint directory.
+    """
+    import torch
+    from workingmem.model import (
+        LSTMModelWrapper,
+        RNNModelWrapper,
+        TransformerModelWrapper,
+    )
+    from workingmem.task import SIRDataset
+
+    model_config = yaml.load(
+        (ckpt_path / "config.yaml").open("r").read(), Loader=yaml.SafeLoader
+    )
+    model_class = model_config["model_class"]
+    if model_class == "lstm":
+        model_class = LSTMModelWrapper
+    elif model_class == "rnn":
+        model_class = RNNModelWrapper
+    elif model_class == "transformer":
+        model_class = TransformerModelWrapper
+
+    model = model_class.from_checkpoint_dir(ckpt_path)
+
+    # also load the dataset corresponding to the model which is specified in the model's history.yaml file
+    hist = yaml.load(
+        (ckpt_path / "history.yaml").open("r").read(), Loader=yaml.SafeLoader
+    )
+    dataset_path = Path(hist[-1]["dataset_path"])
+    dataset = SIRDataset.from_path(dataset_path, split=split, generate=False)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.model.to(device)
+    return model, dataset
