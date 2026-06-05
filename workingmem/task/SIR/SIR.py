@@ -107,6 +107,14 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     seed: typing.Union[int, None] = None
     """random seed for dataset generation as well as picking the random heldout combinations"""
 
+    dirichlet_priors: typing.Union[bool, None] = None
+    """
+    whether to set the priors on roles drawn within a trial sequence according
+    to a dirichlet distribution with alphas=1 (concurrent_roles-dimensional).
+    this approximates a uniform distribution over each role while maintaining a
+    simplex constraint over probabilities of individual roles.
+    """
+
     n_train: int = 100_000
     n_val: int = 1_000
     n_test: int = 1_000
@@ -243,7 +251,7 @@ class SIRDataset(GeneratedCachedDataset):
     def _heldout_setup(self):
         """
         sets up what's needed to construct a held-out challenge set by
-        sampling a set of items to hold out per register
+        sampling a set of items to hold out per role
         """
 
         # instead of enumerating all possible combinations, simply sample as many
@@ -265,6 +273,9 @@ class SIRDataset(GeneratedCachedDataset):
             )
             for i in range(self.config.n_reg)
         }  # len = n_reg
+
+    def _statistics_aligned_setup(self, how_many=0.3):
+        """ """
 
     def __getitem__(
         self, idx: int
@@ -401,6 +412,11 @@ class SIRDataset(GeneratedCachedDataset):
             reg_range, self.config.concurrent_reg, replace=False
         ).astype(int)
 
+        # fix this at trial sequence level!
+        prior_over_roles = np.random.dirichlet(
+            np.ones(len(regs_chosen)), size=1
+        ).squeeze()
+
         register_item_pool = {}
         # typically, we'll be using split-set control when n_reg = 2 and
         # concurrent_reg = 2. then, we'll do a very simple serial mapping of
@@ -517,15 +533,23 @@ class SIRDataset(GeneratedCachedDataset):
             if (len(this_item_seq) < (self.config.n_back or 0)) or (
                 np.random.rand() > self.config.role_n_congruence
             ):
-                # uniformly at random pick a register to operate on from
-                # among the chosen registers
+                # randomly pick a register to operate on from
+                # among the chosen registers. by default, this is chosen
+                # uniformly at random, but optionally, it can be weighted
+                # differently for different registers if this register is
+                # one of the ones marked to occur more frequently in order
+                # to test the set-size-effect hypothesis.
                 # EXCEPT: exclude all registers that have occurred thus far
                 # so that we don't repeat registers before hitting all N,
                 # to facilitate N-back-ness for Role-N congruence
                 if len(this_item_seq) < (self.config.n_back or 0):
                     _regs_chosen = set(regs_chosen).difference(this_reg_seq)
                     return np.random.choice([*_regs_chosen], p=None).astype(int)
+
+                if self.config.dirichlet_priors:
+                    return np.random.choice(regs_chosen, p=prior_over_roles).astype(int)
                 return np.random.choice(regs_chosen, p=None).astype(int)
+
             else:
                 # use the same role that occurred f(N)* trials ago
                 # *f(N), if enabled, excludes ignore trials. whether or not
