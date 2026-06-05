@@ -95,7 +95,7 @@ class MainConfig:
     # between them for each condition we construct
     gpu_partition_names: tuple = (
         "3090-gcondo",
-        "gpu --account=carney-frankmj-condo",
+        "gpu-he --account=carney-frankmj-condo2",
     )
 
     def __post_init__(self, *args, **kwargs):
