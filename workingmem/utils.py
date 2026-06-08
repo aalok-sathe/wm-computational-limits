@@ -35,7 +35,7 @@ except wandb.errors.UsageError:
         to help pass github actions without needing to log into W&B
         """
 
-        def __init__(self, name=None):
+        def __init__(self, name=""):
             self.name = name
 
         def __getattr__(self, name):
@@ -47,7 +47,7 @@ except wandb.errors.UsageError:
         def __str__(self) -> str:
             return repr(self)
 
-    wandbapi = _AttrMaker()
+    wandbapi = _AttrMaker("wandbapi")
 
 
 def print_gpu_mem(obj: typing.Any = None):
