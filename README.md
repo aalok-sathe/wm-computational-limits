@@ -1,26 +1,42 @@
 # `simWM` 🏊: simulation of working memory management with neural networks
 
+- [Introduction](#introduction)
+- [Installation](#getting-started--install)
+
 ## Introduction
-Perceptual as well organism-internal information is plentiful---being able to use all of this information is essential to optimal planning and decision-making. 
-Deciding what information is relevant, choosing to robustly maintain it, accessing it on demand, and overwriting existing information with new, potentially more 
-relevant information, are all ecologically-relevant demands that make intelligent behavior possible. 
-However, knowing what information is relevant in any given context is difficult and needs to be learned over developmental as well as evolutionary timescales.
+The `simWM` computational modeling framework serves to enable computational
+simulations of working memory tasks. 
+A robustly-engineered framework allows researchers to define their own tasks and
+generate datasets with fine control over the parameters of those tasks. The
+framework allows for training neural models in an architecture-agnostic manner,
+so long as they support a PyTorch backend. This includes transformers, recurrent
+neural networks, and long short-term memory networks that can flexibly act as
+_participants_ in the same tasks, allowing for clean, controlled comparisons
+across model instantiations. Users of this framework can add their own models
+to work with the rest of the framework as long as they provide a wrapper
+that conforms with the 
+[model wrapper interface](https://aalok-sathe.github.io/working-memory/workingmem/model.html#ModelWrapper).
+Similarly, users can use the default supported Reference-Back task from
+Rac-Lubashevsky & Kessler, 2016, implemented here, or provide their own implementation
+that conforms to the [dataset interface](https://aalok-sathe.github.io/working-memory/workingmem/task/interface.html#GeneratedCachedDataset).
 
-This repository serves to enable computational simulations of learning and generalization in service of understanding working memory capacity better. A robustly-engineered 
-framework allows researchers to define their own tasks and generate datasets with fine control over the parameters of those tasks. The framework allows for training 
-neural models in an architecture-agnostic manner, so long as they support a PyTorch backend. This includes transformers, recurrent neural networks, and long short-term memory
-networks that can flexibly act as _participants_ in the same tasks, allowing for clean, controlled comparisons across model instantiations.
+Integration with the [weights & biases (`wandb`)](https://wandb.ai)
+experiment-tracking platform promotes robust, open, and replicable science by
+constructing uniquely-tagged and documented config-driven experiments for each
+condition a researcher may be interested in. These experimental conditions live
+in separate spaces on the disk, each with meticulously documented metadata that
+makes discerning results and analyzing data pleasantly organized. Furthermore,
+the software supports exposure and transfer-learning experiments using these
+same condition-based tags, allowing precise documentation of the entire training
+history of a computational model and subsequent experiments on pretrained
+models.
 
-Integration with the 
-[weights & biases (`wandb`)](https://wandb.ai)
-experiment-tracking platform promotes robust, open, and replicable science by constructing uniquely-tagged and documented config-driven experiments for each condition
-a researcher may be interested in. These experimental conditions live in separate spaces on the disk, each with meticulously documented metadata that makes
-discerning results and analyzing data pleasantly organized. Furthermore, the software supports exposure and transfer-learning experiments using these same condition-based
-tags, allowing precise documentation of the entire training history of a computational model and subsequent experiments on pretrained models.
-
-The main module (`python -m workingmem`), implemented as an entrypoint in `workingmem/__main__.py`, does the orchestrating of running experiments, i.e., 
-loading/constructing datasets, training/evaluating models. However, much of the library's functionality exposed for programmatic use as well, and allows
-researchers to construct datasets in a custom manner, manage their own training-eval routines, and handle data management.
+The main module (`python -m workingmem`), implemented as an entrypoint via
+`workingmem/__main__.py`, does the orchestrating of running experiments, i.e., 
+loading/constructing datasets, training/evaluating models. However, much of the
+library's functionality exposed for programmatic use as well, and allows
+researchers to construct datasets in a custom manner, manage their own
+training-eval routines, and handle data management.
 
 **A typical experiment workflow looks like:**
 1. identify manipulations of interest (see what variations the library already supports using `python -m workingmem -h`).
@@ -54,3 +70,9 @@ To exhaustively see the CLI options, run `python -m workingmem -h`.
       - `. ./.venv/bin/activate`: activate the virtual environment in the directory of the library (needed each time you log in to your compute node until you exit/log out)
     - using `pip`:
       - pip install .
+
+
+## References
+- Rac-Lubashevsky, R., & Kessler, Y. (2016). Dissociating working memory updating and automatic updating: The reference-back paradigm. Journal of Experimental Psychology: Learning, Memory, and Cognition, 42(6), 951–969. https://doi.org/10.1037/xlm0000219
+
+# Tutorials
