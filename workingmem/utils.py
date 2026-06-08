@@ -15,14 +15,37 @@ from tqdm.auto import tqdm
 import wandb
 import dacite
 
-wandbapi = wandb.Api()
-
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
 )
 logger = logging.getLogger("workingmem")
 logger.setLevel(logging.INFO)
+
+try:
+    wandbapi = wandb.Api()
+except wandb.errors.UsageError:
+    logger.warning(
+        "wandb API initialization failed. if you are trying to use wandb features, make sure you have logged in to wandb using `wandb login` command and that you have access to the project and sweep you are trying to fetch runs from."
+    )
+
+    class _AttrMaker:
+        """
+        duck typed class allowing indefinitely many recursive __getattr__ calls
+        to help pass github actions without needing to log into W&B
+        """
+
+        def __init__(self, name=None):
+            self.name = name
+
+        def __getattr__(self, name):
+            return _AttrMaker(self.name + "." + name)
+
+        def __repr__(self) -> str:
+            return f"<placeholder for wandbapi.{self.name}>"
+
+        def __str__(self) -> str:
+            return repr(self)
 
 
 def print_gpu_mem(obj: typing.Any = None):
