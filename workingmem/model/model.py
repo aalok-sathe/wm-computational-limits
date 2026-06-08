@@ -1,22 +1,30 @@
 # stdlib
+from typing import Literal
+from typing_extensions import Self
+
+
 import dataclasses
 import typing
 from abc import ABC, abstractmethod
 from pathlib import Path
 import logging
+from itertools import chain
 import yaml
+from collections import OrderedDict
 
 # installed packages
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset, RandomSampler, Subset
 from tqdm.auto import tqdm
-from transformer_lens import HookedTransformer, HookedTransformerConfig
 
 import wandb
 
 # local
-from workingmem.task.interface import GeneratedCachedDataset
+from workingmem.task.interface import (
+    GeneratedCachedDataset,
+    _T_dataset_or_collection_of_datasets,
+)
 from workingmem.model.interface import (
     AbstractPytorchModel,
     TrainingConfig,
@@ -34,8 +42,8 @@ logger.setLevel(logging.DEBUG)
 
 class ModelWrapper(ABC):
     """
-    this model wrapper treats the model as a first-class entity unlike in many training recipes in the field.
-    the model(wrapper) is now responsible to train itself, and to evaluate itself on a supplied dataset.
+    this model wrapper treats the model as a first-class entity.
+    the model(wrapper) is now responsible to train itself, and to evaluate itself on some supplied dataset.
     """
 
     model: AbstractPytorchModel
@@ -56,6 +64,26 @@ class ModelWrapper(ABC):
         `load_and_process_state_dict` method
         """
         self.model.load_state_dict(state_dict)
+
+    @classmethod
+    def from_checkpoint_dir(cls, ckpt_dir) -> Self:
+        """
+        similar to `ModelWrapper.load_checkpoint` except does not
+        already require an initialized model and config---reads in the model
+        config from the supplied checkpoint directory, initializes a model using
+        that config, then makes a call to `load_checkpoint`.
+        """
+        with (Path(ckpt_dir) / "config.yaml").open("r") as f:
+            config = yaml.load(f, Loader=yaml.SafeLoader)
+
+        # return the appropriate instance based on what child class this is
+        # first, initialize the correct class with `config`
+        # second, call `load_checkpoint` on it
+        config = ModelConfig(**config)
+
+        model = cls(config)
+        model.load_checkpoint(ckpt_dir)
+        return model
 
     def __init__(self, config: ModelConfig):
         self.config = config
@@ -83,6 +111,7 @@ class ModelWrapper(ABC):
                 f"any additional options passed to `ModelConfig` will be ignored!\n\t{config}"
             )
             self.load_checkpoint(config.from_pretrained)
+            self.model.to(self.device)
 
         if self.history is None:
             self.history = []
@@ -136,9 +165,20 @@ class ModelWrapper(ABC):
 
         # 3.3 load the state dict into the model: this should overwrite the weights
         _state_dict = torch.load(_state_dict_path, map_location=self.device)
+
+        # if checkpoint uses old Sequential numeric keys, remap to named keys.
+        if any(k.startswith(("0.", "1.", "2.")) for k in _state_dict.keys()):
+            _state_dict = self._rename_state_dict(_state_dict)
+
         self.load_state_dict(_state_dict, _config)
 
         logger.info(f"finished loading model state dict from {_state_dict_path}")
+
+    def _rename_state_dict(self, sd):
+        logger.warning(
+            f"returning state-dict as-is since {self.__class__} has provided no implementation"
+        )
+        return sd
 
     def save_checkpoint(
         self, checkpoint_dir: typing.Union[str, Path], epoch_num: int = None
@@ -211,12 +251,87 @@ class ModelWrapper(ABC):
         """
         raise NotImplementedError
 
+    def _evaluate_and_log(
+        self,
+        datasets: typing.List[GeneratedCachedDataset],
+        log_prefix: str,
+        state: typing.Any,
+        training_config: TrainingConfig,
+        predictions_table: wandb.Table = None,
+        mask_answer_tokens: bool = True,
+    ) -> typing.Tuple[typing.List[dict], float, float, float]:
+        """
+        Helper method to evaluate and log metrics for a list of datasets.
+
+        Args:
+        ---
+        datasets: List[GeneratedCachedDataset]
+            List of datasets to evaluate.
+        log_prefix: str
+            Prefix for logging metrics (e.g., "eval" or "test").
+        state: TrainingState
+            Current training state.
+        training_config: TrainingConfig
+            Configuration for training.
+        predictions_table: wandb.Table (optional)
+            Table for logging predictions.
+        mask_answer_tokens: bool (default=True)
+            Whether to mask answer tokens during evaluation.
+
+        Returns:
+        ---
+        Tuple[float, float, float]
+            Average loss, accuracy, and macro accuracy across datasets.
+        """
+        metrics = []
+        for dataset in datasets:
+            result = self.evaluate(
+                dataset,
+                train_epoch=state.epoch,
+                predictions_table=predictions_table,
+                mask_answer_tokens=mask_answer_tokens,
+            )
+            metrics.append(
+                dict(
+                    **result,
+                    dataset=str(dataset),
+                )
+            )
+
+        avg_loss = np.mean([entry["loss"] for entry in metrics])
+        avg_acc = np.mean([entry["acc"] for entry in metrics])
+        avg_macro_acc = np.mean([entry["macro_acc"] for entry in metrics])
+
+        wandb.log(
+            {
+                **dataclasses.asdict(state),
+                "step": state.step,
+                f"{log_prefix}_loss": avg_loss,
+                f"{log_prefix}_acc": avg_acc,
+                f"{log_prefix}_macro_acc": avg_macro_acc,
+                **{
+                    f"{entry['dataset']}_{log_prefix}_acc": entry["acc"]
+                    for entry in metrics
+                },
+                **{
+                    f"{entry['dataset']}_{log_prefix}_loss": entry["loss"]
+                    for entry in metrics
+                },
+            }
+        )
+
+        logger.info(
+            f"{log_prefix.upper()}: {state.epoch = } {avg_loss = :.3f}, {avg_acc = :.3f}, {avg_macro_acc = :.3f}"
+        )
+
+        return metrics, avg_loss, avg_acc, avg_macro_acc
+
     def train(
         self,
-        dataset: GeneratedCachedDataset,
+        dataset: _T_dataset_or_collection_of_datasets,
         training_config: TrainingConfig,
-        eval_dataset: GeneratedCachedDataset = None,
-        test_dataset: GeneratedCachedDataset = None,
+        eval_dataset: _T_dataset_or_collection_of_datasets = None,
+        test_dataset: _T_dataset_or_collection_of_datasets = None,
     ):
         """
         given an `eval_dataset` and `test_dataset`, periodically evaluates model and logs the results
@@ -225,8 +340,14 @@ class ModelWrapper(ABC):
         # create an entry for history logging, which will be updated as we go
         self.history += [
             TrainingHistoryEntry(
-                dataset_name=repr(dataset),
-                dataset_path=str(dataset.config.basedir),
+                dataset_name=repr(
+                    dataset
+                ),  # repr should recursively call repr() on child datasets if a list is given
+                dataset_path=(
+                    str(dataset.config.basedir)
+                    if isinstance(dataset, GeneratedCachedDataset)
+                    else [str(d.config.basedir) for d in dataset]
+                ),
                 batch_size=training_config.batch_size,
                 learning_rate=training_config.learning_rate,
                 sparsity=training_config.sparsity,
@@ -237,19 +358,91 @@ class ModelWrapper(ABC):
                 run_url=(wandb.run.get_url() if wandb.run else None),
                 checkpoint_dir=None,  # to be filled in later
                 epoch=0,  # to be filled in later
-                eval_acc=None,  # to be filled in later
+                eval_acc=None,  # to be filled in later; will house the average acc across passed eval_dataset(s)
                 eval_macro_acc=None,  # to be filled in later
-                test_acc=None,  # to be filled in later
+                test_acc=None,  # to be filled in later; will house the average acc across passed eval_dataset(s)
                 test_macro_acc=None,  # to be filled in later
+                sub_metrics={},  # to be filled in later; will house either None or a list of child TrainingHistoryEntry objects per eval dataset
             )
         ]
 
-        train_dataloader = DataLoader(
-            dataset,
-            batch_size=training_config.batch_size,
-            shuffle=True,
-            num_workers=1,
-            pin_memory=True,
+        # this IF-condition tests whether this is a singleton dataset rather than a list;
+        # if so, we wrap it in a single-item list
+        # when a singular dataset is passed, there is nothing to interleave or scaffold with
+        if isinstance(dataset, GeneratedCachedDataset):
+            dataloaders = [
+                DataLoader(
+                    dataset,
+                    batch_size=training_config.batch_size,
+                    shuffle=True,
+                    num_workers=1,
+                    pin_memory=True,
+                )
+            ]
+        # Create a DataLoader for each dataset within the passed list
+        else:
+            #### IF BLOCKED (no interleaving---we train sequentially in the order the datasets are presented,
+            # shuffling within dataset):
+            if not (training_config.interleaved or training_config.scaffolded):
+                dataloaders = [
+                    DataLoader(
+                        d,
+                        sampler=RandomSampler(d, num_samples=len(d) // len(dataset)),
+                        batch_size=training_config.batch_size,
+                        num_workers=1,
+                        shuffle=True,  # shuffle=True makes the data shuffled within block but NOT interleaved
+                        pin_memory=True,
+                    )
+                    for d in dataset
+                ]
+
+            #### ELIF INTERLEAVED (items are shuffled across datasets---each next item/trial sequence is drawn at random
+            # from any of the list of supplied datasets without replacement per epoch)
+            elif training_config.interleaved:
+                assert not training_config.scaffolded, (
+                    f"unsupported: passing both {training_config.scaffolded = } and {training_config.interleaved = }"
+                )
+                dataloaders = [
+                    DataLoader(
+                        ConcatDataset(
+                            [
+                                Subset(
+                                    d, indices=np.arange(0, len(d) // len(dataset) + 1)
+                                )
+                                for d in dataset
+                            ]
+                        ),
+                        batch_size=training_config.batch_size,
+                        num_workers=1,
+                        shuffle=True,  # shuffle=True makes the data shuffled within block but NOT interleaved
+                        pin_memory=True,
+                    )
+                ]
+
+            #### IF SCAFFOLDED: we want to train sequentially for entire epochs on subsequent datasets.
+            # here, we'll simply assemble a list of full-size dataloaders to be used dynamically during training
+            # contingent on epoch number
+            elif training_config.scaffolded:
+                dataloaders = [
+                    DataLoader(
+                        d,
+                        batch_size=training_config.batch_size,
+                        num_workers=1,
+                        shuffle=True,  # shuffle=True makes the data shuffled within block but NOT interleaved
+                        pin_memory=True,
+                    )
+                    for d in dataset
+                ]
+
+        _len_train_dataset = (
+            sum(len(d) for d in dataset) if isinstance(dataset, list) else len(dataset)
+        )
+
+        eval_datasets = (
+            eval_dataset if isinstance(eval_dataset, list) else [eval_dataset]
+        )
+        test_datasets = (
+            test_dataset if isinstance(test_dataset, list) else [test_dataset]
         )
 
         @dataclasses.dataclass
@@ -272,11 +465,12 @@ class ModelWrapper(ABC):
             # so, the max possible value is 1.0 x num_epochs. for instance, a model that achieves 1.0 accuracy starting from
             # epoch 0 will have cumAUC = num_epochs
             cumAUC: float = 0.0
+            dataset_ix: int = 0  # tracks dataset used, relevant for scaffolded training
 
             @property
             def step(self):
                 return self.epoch_step + np.ceil(
-                    self.epoch * len(dataset) / training_config.batch_size
+                    self.epoch * _len_train_dataset / training_config.batch_size
                 )
 
         if training_config.log_predictions:
@@ -306,11 +500,7 @@ class ModelWrapper(ABC):
             ################################
             #### begin epoch            ####
             ################################
-            # set the model to training mode at the beginning of each epoch, since there is
-            # no guarantee that it will still be in training mode from the previous epoch
-            # if we went into the eval subroutine
-            # NOTE this might not matter, since we don't use standard language modeling
-            # design decisions like dropout
+            # set the model to training mode at the beginning of each epoch
             self.model.train()
 
             # freeze model embeddings (and unembeddings) if requested
@@ -328,6 +518,38 @@ class ModelWrapper(ABC):
             #         param.requires_grad = False
 
             self.history[-1].epoch = state.epoch
+
+            # if this is ordinary training or blocked or interleaved training, we want to use all the datasets from the dataloader
+            if not training_config.scaffolded:
+                # combine the dataloaders into a single iterable right before use so we can refresh the iterable each epoch
+                train_dataloader = chain.from_iterable(dataloaders)
+
+            # if this is scaffolded training, the data distribution to use depends on the epoch, since we'll progressively
+            # shift the training data distribution as training goes on. by default, all training datasets are uniformly distributed
+            # over the total training time, meaning, if 3 datasets are passed, the first 1/3rd epochs will use the first dataset,
+            # the next 1/3rd will use the 2nd, and so on.
+            else:
+                # if we detect the previous epoch had an accuracy of > 0.9
+                # (criterion) then we can move on to the next one
+                if (
+                    self.history[-1].eval_acc is not None
+                    and self.history[-1].eval_acc >= 0.9
+                ):
+                    state.dataset_ix += 1
+                    state.dataset_ix = min(
+                        state.dataset_ix, len(dataloaders) - 1
+                    )  # prevent index out of bounds error---we can only go up to the max no. of datasets
+
+                # otherwise, by default, pick the dataset that corresponds to the epoch
+                # but, if we had already early-advanced to a higher dataset previously based on reaching criterion
+                # don't regress---stay there even if the epoch-based dataset_ix is lower.
+                else:
+                    epochs_per_chunk = training_config.epochs / len(dataloaders)
+                    epoch_based_dataset_ix = state.epoch // epochs_per_chunk
+                    state.dataset_ix = max(state.dataset_ix, epoch_based_dataset_ix)
+
+                state.dataset_ix = int(state.dataset_ix)
+                train_dataloader = dataloaders[state.dataset_ix]
 
             for state.epoch_step, inputs in enumerate(train_dataloader):
                 if state.best_val_acc >= 0.999:
@@ -348,8 +570,6 @@ class ModelWrapper(ABC):
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
-                    # loss.backward()
-                    # optimizer.step()
                     optimizer.zero_grad()
 
                     wandb.log(
@@ -362,7 +582,7 @@ class ModelWrapper(ABC):
 
                 # evaluate the model when you reach the logging step within the epoch
                 log_every_steps = (
-                    len(dataset)
+                    _len_train_dataset
                     // training_config.batch_size
                     // training_config.logging_steps_per_epoch
                 )
@@ -372,46 +592,26 @@ class ModelWrapper(ABC):
                 ):
                     ################################
                     # eval loop mid-epoch at however-many logging steps
-                    eval_result = self.evaluate(
-                        eval_dataset,
-                        # we will not be passing the predictions table
-                        # to the eval loop; predictions will be logged at
-                        # the end of each epoch
-                        train_epoch=None,
-                        predictions_table=None,
-                        mask_answer_tokens=training_config.mask_answer_tokens,
+
+                    eval_metrics, eval_loss, eval_acc, eval_macro_acc = (
+                        self._evaluate_and_log(
+                            eval_datasets,
+                            log_prefix="eval",
+                            state=state,
+                            training_config=training_config,
+                            mask_answer_tokens=training_config.mask_answer_tokens,
+                        )
                     )
-                    eval_loss, eval_acc, eval_macro_acc = (
-                        eval_result["loss"],
-                        eval_result["acc"],
-                        eval_result["macro_acc"],
+                    test_metrics, test_loss, test_acc, test_macro_acc = (
+                        self._evaluate_and_log(
+                            test_datasets,
+                            log_prefix="test",
+                            state=state,
+                            training_config=training_config,
+                            mask_answer_tokens=training_config.mask_answer_tokens,
+                        )
                     )
-                    test_result = self.test(test_dataset, test_predictions_table=None)
-                    test_loss, test_acc, test_macro_acc = (
-                        test_result["loss"],
-                        test_result["acc"],
-                        test_result["macro_acc"],
-                    )
-                    # update latest known eval_acc
-                    self.history[-1].eval_acc = float(eval_acc)
-                    self.history[-1].test_acc = float(test_acc)
-                    self.history[-1].eval_macro_acc = float(eval_macro_acc)
-                    self.history[-1].test_macro_acc = float(eval_macro_acc)
-                    wandb.log(
-                        wandb_logged := {
-                            **dataclasses.asdict(state),
-                            "step": state.step,
-                            "eval_loss": eval_loss,
-                            "eval_acc": eval_acc,
-                            "eval_macro_acc": eval_macro_acc,
-                            "test_loss": test_loss,
-                            "test_acc": test_acc,
-                            "test_macro_acc": test_macro_acc,
-                        }
-                    )
-                    logger.info(
-                        f"------------- {state.epoch_step = } {eval_loss = :.3f}, {test_loss = :.3f},  {eval_acc = :.3f}, {test_acc = :.3f}"
-                    )
+
                     # end eval loop mid-epoch at however-many logging steps
                     ################################
                     self.model.train()
@@ -422,28 +622,32 @@ class ModelWrapper(ABC):
             ):
                 ################################
                 # eval once at the end of every epoch
-                eval_result = self.evaluate(
-                    eval_dataset,
-                    train_epoch=state.epoch,
-                    # passing the predictions table to the eval loop for
-                    # logging predictions and heatmaps over logits
-                    predictions_table=predictions_table,
-                    mask_answer_tokens=training_config.mask_answer_tokens,
+                eval_metrics, eval_loss, eval_acc, eval_macro_acc = (
+                    self._evaluate_and_log(
+                        eval_datasets,
+                        log_prefix="eval",
+                        state=state,
+                        training_config=training_config,
+                        predictions_table=predictions_table,
+                        mask_answer_tokens=training_config.mask_answer_tokens,
+                    )
                 )
-                eval_loss, eval_acc, eval_macro_acc = (
-                    eval_result["loss"],
-                    eval_result["acc"],
-                    eval_result["macro_acc"],
-                )
-                test_result = self.test(test_dataset, test_predictions_table=None)
-                test_loss, test_acc, test_macro_acc = (
-                    test_result["loss"],
-                    test_result["acc"],
-                    test_result["macro_acc"],
+                test_metrics, test_loss, test_acc, test_macro_acc = (
+                    self._evaluate_and_log(
+                        test_datasets,
+                        log_prefix="test",
+                        state=state,
+                        training_config=training_config,
+                        mask_answer_tokens=training_config.mask_answer_tokens,
+                    )
                 )
                 # update latest known eval_acc
                 self.history[-1].eval_acc = float(eval_acc)
                 self.history[-1].eval_macro_acc = float(eval_macro_acc)
+                for entry in eval_metrics + test_metrics:
+                    dataset_repr = entry["dataset"]
+                    self.history[-1].sub_metrics[dataset_repr] = {**entry}
+
                 state.cumAUC += eval_acc * 1
 
                 logger.info(
@@ -460,8 +664,8 @@ class ModelWrapper(ABC):
                         "test_loss": test_loss,
                         "test_acc": test_acc,
                         "test_macro_acc": test_macro_acc,
-                        "cumAUC": state.cumAUC,
-                        "cumAUC_normalized": state.cumAUC / state.epoch,
+                        # "cumAUC": state.cumAUC,
+                        # "cumAUC_normalized": state.cumAUC / state.epoch,
                     }
                 )
                 logger.debug(f"{wandb_logged = }")
@@ -496,6 +700,11 @@ class ModelWrapper(ABC):
             #### end epoch              ####
             ################################
 
+        self.save_checkpoint(
+            training_config.checkpoint_dir,
+            epoch_num=state.epoch,
+        )
+
         if predictions_table is not None:
             wandb.log({"predictions": predictions_table})
 
@@ -509,16 +718,14 @@ class ModelWrapper(ABC):
                     "test_labels",
                 ]
             )
-            test_result = self.test(
-                test_dataset,
-                test_table,
+            test_metrics, test_loss, test_acc, test_macro_acc = self._evaluate_and_log(
+                test_datasets,
+                log_prefix="test",
+                state=state,
+                training_config=training_config,
                 mask_answer_tokens=training_config.mask_answer_tokens,
             )
-            test_loss, test_acc, test_macro_acc = (
-                test_result["loss"],
-                test_result["acc"],
-                test_result["macro_acc"],
-            )
+
             logger.info(f"TEST: {test_loss = }, {test_acc = }, {test_macro_acc = }")
             wandb.log(
                 {
@@ -624,15 +831,24 @@ class ModelWrapper(ABC):
         # predictions.shape = (N_batches * batch_size, seq_len)
         # actual_labels.shape = (N_batches * batch_size, seq_len)
 
+        # ignore the first O(N) (where N = N_BACK or REF_BACK_N or `dataset.concurrent_reg`) trials from
+        # accuracy calculation
+        def _get_warmup_steps(N):
+            return N * 2
+
+        WARMUP_STEPS = _get_warmup_steps(dataset.config.concurrent_reg)
+
         # we want to aggregate over each example in val set rather than each individual answer location
         eval_num_correct = np.sum(
             all(predictions[i] == actual_labels[i])
             for i in range(actual_labels.shape[0])
         )
-        acc = np.mean(predictions == actual_labels)
+        acc = np.mean(predictions[:, WARMUP_STEPS:] == actual_labels[:, WARMUP_STEPS:])
 
-        logger.info(f"percent trials correct: {acc:.5f}")
-        logger.info(f"# sequences correct: {eval_num_correct} / {len(actual_labels)}")
+        logger.info(f"percent trials correct for dataset {dataset}: {acc:.5f}")
+        logger.info(
+            f"# sequences correct for dataset {dataset}: {eval_num_correct} / {len(actual_labels)}"
+        )
 
         if return_predictions:
             return {
@@ -645,9 +861,9 @@ class ModelWrapper(ABC):
             }
 
         return {
-            "loss": np.mean(losses),
-            "acc": acc,
-            "macro_acc": eval_num_correct / len(actual_labels),
+            "loss": float(np.mean(losses)),
+            "acc": float(acc),
+            "macro_acc": float(eval_num_correct / len(actual_labels)),
         }
 
     def _step(
@@ -688,9 +904,7 @@ class ModelWrapper(ABC):
             )
 
         # shape of logits: (b, seq_len, |V|)
-        # TODO: ERROR: mismatch for model_class 'rnn' ---
-        # TypeError: linear(): argument 'input' (position 1) must be Tensor, not tuple
-        logits = self.model(inputs["token_ids"])
+        logits = self.forward(inputs["token_ids"])
 
         if return_outputs:
             outputs = compute_masked_loss(
@@ -718,22 +932,104 @@ class ModelWrapper(ABC):
             )
             return loss
 
+    def __call__(self, *args, return_hidden_states=False, **kwargs):
+        if return_hidden_states:
+            return self.get_representations_over_sequence(*args, **kwargs)
+        return self.model(*args, **kwargs)
+
+    def forward(self, *args, return_hidden_states=False, **kwargs):
+        return self(*args, return_hidden_states=return_hidden_states, **kwargs)
+
+    @abstractmethod
+    def get_representations_over_sequence(
+        self,
+        trial_sequence: typing.Dict[str, torch.Tensor],
+    ):
+        """
+        method meant to be implemented by each child model class that would support recording
+        internal states of the model, such as, hidden states and outputs per layer for RNNs,
+        memory cells for LSTMs, and possibly attention head outputs/layer-wise outputs for
+        transformer models
+        """
+        NotImplemented
+
 
 class RNNModelWrapper(ModelWrapper):
-    """ """
+    """provides a wrapper for initializing an RNN"""
 
     class _forward_overridden_RNN(torch.nn.RNN):
         """
-        overrides torch.nn.RNN to return only the output tensor, not the hidden state
-        so we can plug into the existing ModelWrapper interface
+        overrides torch.nn.RNN to return only the output tensor by default, not
+        the hidden state so we can plug into the existing ModelWrapper interface
         """
 
-        def forward(self, input: torch.Tensor, hx: torch.Tensor = None) -> torch.Tensor:
-            output, hidden = super().forward(input, hx)
-            return output
+        def forward(
+            self,
+            input: torch.Tensor,
+            hx: torch.Tensor = None,
+            return_hidden_states: bool = False,
+        ) -> torch.Tensor:
+            """override default forward"""
+            if not return_hidden_states:
+                output, hidden = super().forward(input, hx)
+                return output
+
+            # else: we want to record all hidden states, so we'll pass in the
+            # inputs one timestep at a time.
+            # the input shape is (b, seq_len) and we want to iterate over the seq_len dimension
+            # and collect the intermediate hidden states at each step. we can actually make a call
+            # to the same `forward` method recursively, but with `return_hidden_states=True` to
+            # get the output at each step with the hidden states. then we'll stack it and return it.
+            all_outputs = []
+            all_hidden_states = []
+            *b, seq_len, _ = input.shape
+            for t in range(seq_len):
+                input_t = input[..., t : t + 1, :]
+                output_t, hx = super().forward(input_t, hx)
+                all_outputs.append(output_t)
+                all_hidden_states.append(hx)
+
+            all_outputs = torch.cat(all_outputs, dim=len(b))
+            all_hidden_states = torch.stack(all_hidden_states, dim=len(b))
+            return all_outputs, all_hidden_states
 
     def __init__(self, config: ModelConfig):
         super().__init__(config)
+
+    @classmethod
+    def _rename_state_dict(cls, sd: dict) -> dict:
+        """
+        Map old Sequential numeric keys (0/1/2) -> new named keys (embed/rnn/unembed),
+        using labels from `_get_nn_sequential_block_labels` instead of hardcoding.
+        """
+        old_embed, old_main, old_unembed = cls._get_nn_sequential_block_labels(
+            compat=True
+        )
+        new_embed, new_main, new_unembed = cls._get_nn_sequential_block_labels(
+            compat=False
+        )
+
+        out = {}
+        for k, v in sd.items():
+            if k.startswith(f"{old_embed}."):
+                out[f"{new_embed}.{k[len(old_embed) + 1 :]}"] = v
+            elif k.startswith(f"{old_main}."):
+                out[f"{new_main}.{k[len(old_main) + 1 :]}"] = v
+            elif k.startswith(f"{old_unembed}."):
+                out[f"{new_unembed}.{k[len(old_unembed) + 1 :]}"] = v
+            else:
+                out[k] = v
+        return out
+
+    @classmethod
+    def _get_nn_sequential_block_labels(
+        cls, compat=False
+    ) -> tuple[Literal["0", "embed"], Literal["1", "rnn"], Literal["2", "unembed"]]:
+
+        embed_label, main_label, unembed_label = "embed", "rnn", "unembed"
+        if compat:
+            embed_label, main_label, unembed_label = "0", "1", "2"
+        return embed_label, main_label, unembed_label
 
     def _init_model(self, config: ModelConfig):
         """
@@ -743,29 +1039,124 @@ class RNNModelWrapper(ModelWrapper):
         back to the vocabulary space for language modeling.
         uses boilerplate RNN code from pytorch wherever possible.
         """
+        embed_label, main_label, unembed_label = self._get_nn_sequential_block_labels()
         self.model = torch.nn.Sequential(
-            torch.nn.Embedding(config.d_vocab, config.d_model),
-            self._forward_overridden_RNN(
-                input_size=config.d_model,
-                hidden_size=config.d_hidden,
-                num_layers=config.n_layers,
-                batch_first=True,
-                nonlinearity=config.act_fn,
-                bidirectional=False,
-            ),
-            torch.nn.Linear(config.d_hidden, config.d_vocab),
+            OrderedDict(
+                [
+                    (embed_label, torch.nn.Embedding(config.d_vocab, config.d_model)),
+                    (
+                        main_label,
+                        self._forward_overridden_RNN(
+                            input_size=config.d_model,
+                            hidden_size=config.d_hidden,
+                            num_layers=config.n_layers,
+                            batch_first=True,
+                            nonlinearity=config.act_fn,
+                            bidirectional=False,
+                        ),
+                    ),
+                    (
+                        unembed_label,
+                        torch.nn.Linear(config.d_hidden, config.d_vocab),
+                    ),
+                ]
+            )
         )
+
+    def get_representations_over_sequence(
+        self,
+        trial_sequence: typing.Dict[str, torch.Tensor],
+        mask_answer_tokens=True,
+    ):
+        """
+        run a trial sequence through embed -> RNN/LSTM -> unembed and return
+        intermediate tensors for each of: embedding, RNN/LSTM hidden states, and logits.
+        """
+
+        trial_sequence["token_ids"] = trial_sequence["token_ids"].to(self.device)
+        trial_sequence["answer_locations"] = trial_sequence["answer_locations"].to(
+            self.device
+        )
+        trial_sequence["answer_locations"].requires_grad = False  # not backprop-able
+
+        # a variation we can do here is to remove the actual answer tokens from the inputs
+        # so this is less like a language modeling task and more like a classification task
+        # (which it already is in principle due to not receiving loss on anything but the
+        # answers). however, this way, it should take away the answers implicit in the input
+        # text
+        trial_sequence["answers"] = trial_sequence["token_ids"] * trial_sequence[
+            "answer_locations"
+        ].to(
+            self.device
+        )  # only the relevant token_ids remain non-zeroed-out as `answers`
+
+        if mask_answer_tokens:
+            trial_sequence["token_ids"] = trial_sequence["token_ids"] * (
+                1 - trial_sequence["answer_locations"]
+            )
+
+        # Submodules by attribute name
+        embed = self.model.embed
+        unembed = self.model.unembed
+
+        # RNN block may be named rnn or lstm depending on wrapper
+        if hasattr(self.model, "rnn"):
+            rnn_block = self.model.rnn
+        elif hasattr(self.model, "lstm"):
+            rnn_block = self.model.lstm
+        else:
+            raise AttributeError(
+                "expected 'self.model' to have attribute 'rnn' or 'lstm'"
+            )
+
+        with torch.no_grad():
+            embeddings = embed(trial_sequence["token_ids"])
+
+            # Ask overridden block to return states
+            rnn_out = rnn_block(embeddings, return_hidden_states=True)
+
+            if isinstance(rnn_out, tuple) and len(rnn_out) == 2:
+                seq_out, state = rnn_out
+            else:
+                # Fallback if block doesn't support return_hidden_states
+                seq_out, state = rnn_out, None
+
+            logits = unembed(seq_out)
+
+            result: typing.Dict[str, typing.Any] = {
+                "embeddings": embeddings,
+                "rnn_outputs": seq_out,
+                "logits": logits,
+            }
+
+            if state is not None:
+                # LSTM: (h_n, c_n); RNN/GRU: h_n
+                if isinstance(state, tuple) and len(state) == 2:
+                    h_n, c_n = state
+                    result["hidden_states"] = h_n
+                    result["cell_states"] = c_n
+                else:
+                    result["hidden_states"] = state
+
+            return result
 
 
 class LSTMModelWrapper(RNNModelWrapper):
     class _forward_overridden_RNN(torch.nn.LSTM):
         """
-        overrides torch.nn.RNN to return only the output tensor, not the hidden state
-        so we can plug into the existing ModelWrapper interface
+        overrides torch.nn.LSTM to return only the output tensor, not the hidden state
+        or cell states so it can plug into the existing ModelWrapper interface easily
         """
 
-        def forward(self, input: torch.Tensor, hx: typing.Tuple = None) -> torch.Tensor:
+        def forward(
+            self,
+            input: torch.Tensor,
+            hx: typing.Tuple = None,
+            return_hidden_states: bool = False,
+        ) -> torch.Tensor:
             output, (hidden, cell) = super().forward(input, hx)
+            if return_hidden_states:
+                return output, (hidden, cell)
             return output
 
     def __init__(self, config: ModelConfig):
@@ -779,17 +1170,38 @@ class LSTMModelWrapper(RNNModelWrapper):
         back to the vocabulary space for language modeling.
         uses boilerplate LSTM code from pytorch wherever possible.
         """
+
         self.model = torch.nn.Sequential(
-            torch.nn.Embedding(config.d_vocab, config.d_model),
-            self._forward_overridden_RNN(
-                input_size=config.d_model,
-                hidden_size=config.d_hidden,
-                num_layers=config.n_layers,
-                batch_first=True,
-                bidirectional=False,
-            ),
-            torch.nn.Linear(config.d_hidden, config.d_vocab),
+            OrderedDict(
+                [
+                    ("embed", torch.nn.Embedding(config.d_vocab, config.d_model)),
+                    (
+                        "lstm",
+                        self._forward_overridden_RNN(
+                            input_size=config.d_model,
+                            hidden_size=config.d_hidden,
+                            num_layers=config.n_layers,
+                            batch_first=True,
+                            bidirectional=False,
+                        ),
+                    ),
+                    (
+                        "unembed",
+                        torch.nn.Linear(config.d_hidden, config.d_vocab),
+                    ),
+                ]
+            )
         )
+
+    @classmethod
+    def _get_nn_sequential_block_labels(
+        cls, compat=False
+    ) -> tuple[Literal["0", "embed"], Literal["1", "lstm"], Literal["2", "unembed"]]:
+
+        embed_label, main_label, unembed_label = "embed", "lstm", "unembed"
+        if compat:
+            embed_label, main_label, unembed_label = "0", "1", "2"
+        return embed_label, main_label, unembed_label
 
 
 class TransformerModelWrapper(ModelWrapper):
@@ -800,6 +1212,9 @@ class TransformerModelWrapper(ModelWrapper):
         super().__init__(config)
 
     def _init_model(self, config: ModelConfig):
+
+        from transformer_lens import HookedTransformer, HookedTransformerConfig
+
         # Only pass fields that HookedTransformerConfig actually accepts, and
         # continue to exclude fields that are not constructor arguments.
         config_dict = dataclasses.asdict(config)
@@ -807,7 +1222,8 @@ class TransformerModelWrapper(ModelWrapper):
         hooked_config_kwargs = {
             k: v
             for k, v in config_dict.items()
-            if k in allowed_fields and k not in ("from_pretrained", "positional_embedding_type")
+            if k in allowed_fields
+            and k not in ("from_pretrained", "positional_embedding_type")
         }
         hookedtfm_config = HookedTransformerConfig(
             # d_head=config.d_head, # NOTE: formerly, this was passed as a separate argument because it was a @property
@@ -855,3 +1271,15 @@ class TransformerModelWrapper(ModelWrapper):
         """
         self.model.pos_embed.W_pos.data[:] = 0.0
         self.model.pos_embed.W_pos.requires_grad = False
+
+    def get_representations_over_sequence(
+        self,
+        trial_sequence: typing.Dict[str, torch.Tensor],
+    ):
+        """
+        method meant to be implemented by each child model class that would support recording
+        internal states of the model, such as, hidden states and outputs per layer for RNNs,
+        memory cells for LSTMs, and possibly attention head outputs/layer-wise outputs for
+        transformer models
+        """
+        raise NotImplementedError

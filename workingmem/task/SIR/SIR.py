@@ -37,7 +37,7 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     """total number of items in vocab to draw from"""
     seq_len: int = 200
     """length of a trial sequence"""
-    concurrent_reg: int = 4
+    concurrent_reg: int | typing.List[int] = 4
     """number of registers to use concurrently within a trial. if this
         number is too high, we risk a simple heuristic solution such as: 
         simply check if an item has appeared in the prior history, when 
@@ -72,15 +72,15 @@ class SIRConfig(GeneratedCachedDatasetConfig):
     """temporal dependence probability: (X_N ~ Uniform[0,1]) the probability with which 
         the corrent ANS at the current trial depends on the item that occurred at a 
         previous trial N* trials ago
-        *another interpretation of N is f(N), where f(N) is ignore-trial-aware (TODO; NotImplemented)
+        *another interpretation of N is f(N), where f(N) is ignore-trial-aware 
         """
-    n_back: typing.Union[int, None] = None
+    n_back: int | typing.List[int] | None = None
     """specify N for n-back-i-ness. must be >= 1 when provided. 
         must be provided when temporal dependence (`td_prob`) > 0. 
         does nothing when `td_prob` = 0.
         should be = `concurrent_reg` for `role_n_congruence` to be an
         effective signal
-        *f(N), where f(N) is ignore-trial-aware (TODO; NotImplemented)
+        *f(N), where f(N) is ignore-trial-aware 
         """
     role_n_congruence: typing.Union[float, None] = 0.0
     """role-N congruence probability: (Y ~ Uniform[0,1])
@@ -106,6 +106,14 @@ class SIRConfig(GeneratedCachedDatasetConfig):
         (mimics the global split set condition on a micro scale)"""
     seed: typing.Union[int, None] = None
     """random seed for dataset generation as well as picking the random heldout combinations"""
+
+    dirichlet_priors: typing.Union[bool, None] = None
+    """
+    whether to set the priors on roles drawn within a trial sequence according
+    to a dirichlet distribution with alphas=1 (concurrent_roles-dimensional).
+    this approximates a uniform distribution over each role while maintaining a
+    simplex constraint over probabilities of individual roles.
+    """
 
     n_train: int = 100_000
     n_val: int = 1_000
@@ -232,6 +240,9 @@ class SIRDataset(GeneratedCachedDataset):
         np.random.seed(config.seed or 42)
         random.seed(config.seed or 42)
 
+        if config.n_back is None and config.concurrent_reg is not None:
+            config.n_back = config.concurrent_reg
+
         super().__init__(config)
         self.tokenizer = tokenizer or SIRTokenizer.from_params(
             self.config.n_reg, self.config.n_items
@@ -240,7 +251,7 @@ class SIRDataset(GeneratedCachedDataset):
     def _heldout_setup(self):
         """
         sets up what's needed to construct a held-out challenge set by
-        sampling a set of items to hold out per register
+        sampling a set of items to hold out per role
         """
 
         # instead of enumerating all possible combinations, simply sample as many
@@ -262,6 +273,9 @@ class SIRDataset(GeneratedCachedDataset):
             )
             for i in range(self.config.n_reg)
         }  # len = n_reg
+
+    def _statistics_aligned_setup(self, how_many=0.3):
+        """ """
 
     def __getitem__(
         self, idx: int
@@ -398,6 +412,11 @@ class SIRDataset(GeneratedCachedDataset):
             reg_range, self.config.concurrent_reg, replace=False
         ).astype(int)
 
+        # fix this at trial sequence level!
+        prior_over_roles = np.random.dirichlet(
+            np.ones(len(regs_chosen)), size=1
+        ).squeeze()
+
         register_item_pool = {}
         # typically, we'll be using split-set control when n_reg = 2 and
         # concurrent_reg = 2. then, we'll do a very simple serial mapping of
@@ -407,7 +426,7 @@ class SIRDataset(GeneratedCachedDataset):
         # more general
         if self.config.global_split_set_control:
             assert mode is None, (
-                "/held-out train/challenge modes not supported for split-set control"
+                "held-out train/challenge modes not supported for split-set control"
                 " (if you think about it, split-set control is already a held-out mode "
                 "that exposes only certain register-item combinations during training)"
             )
@@ -420,8 +439,8 @@ class SIRDataset(GeneratedCachedDataset):
             # it should be OK---there is no randomness involved, so it produces the same
             # item subranges each time called
             # `how_many` is the number of items used with each register per trial sequence.
-            # e.g., for 64 registers and 128 items, `how_many` will be 2, and 2 registers
-            # will be sampled from a larger pool of 4 registers (out of 256) that always occur
+            # e.g., for 64 registers and 128 items, `how_many` will be 2, and 2 items
+            # will be sampled from a larger pool of 4 items (out of 256) that always occur
             # with this register
             how_many = self.config.concurrent_items // self.config.concurrent_reg
             # within each trial sequence, we must have the same number of concurrent items
@@ -514,15 +533,23 @@ class SIRDataset(GeneratedCachedDataset):
             if (len(this_item_seq) < (self.config.n_back or 0)) or (
                 np.random.rand() > self.config.role_n_congruence
             ):
-                # uniformly at random pick a register to operate on from
-                # among the chosen registers
+                # randomly pick a register to operate on from
+                # among the chosen registers. by default, this is chosen
+                # uniformly at random, but optionally, it can be weighted
+                # differently for different registers if this register is
+                # one of the ones marked to occur more frequently in order
+                # to test the set-size-effect hypothesis.
                 # EXCEPT: exclude all registers that have occurred thus far
                 # so that we don't repeat registers before hitting all N,
                 # to facilitate N-back-ness for Role-N congruence
                 if len(this_item_seq) < (self.config.n_back or 0):
                     _regs_chosen = set(regs_chosen).difference(this_reg_seq)
                     return np.random.choice([*_regs_chosen], p=None).astype(int)
+
+                if self.config.dirichlet_priors:
+                    return np.random.choice(regs_chosen, p=prior_over_roles).astype(int)
                 return np.random.choice(regs_chosen, p=None).astype(int)
+
             else:
                 # use the same role that occurred f(N)* trials ago
                 # *f(N), if enabled, excludes ignore trials. whether or not
@@ -607,16 +634,36 @@ class SIRDataset(GeneratedCachedDataset):
 
                 # sample item uniformly at random and make it diff from N* trials back
                 if n_back:
-                    # NOTE there is (currently) no notion of split-set for N-back
-                    # though there could be---for example we could store certain
-                    # items only for odd or even indices
+                    # split set for N-back:
+                    # modulus of N, so that the item pool for the N-back trial
+                    # is different from the item pool for the non-N-back trial.
+                    # but for now, we are just sampling from the same pool of
+                    # items regardless of whether it's an N-back trial or not.
+
+                    # since the split-set-control condition is set up to
+                    # time-lock items to registers, we have to frame N as though
+                    # it were a register---so we can use the register-item
+                    # mapping to determine the item pool for the N-back trial.
+                    MODULO_INDEX = (
+                        len(this_item_seq) % self.config.n_back
+                    )  # 0, 1, ... N-1 (ignore-aware since we're measuring trial idx based on this_item_seq!)
+
+                    this_trial_item_pool = (
+                        register_item_pool[regs_chosen[MODULO_INDEX]]
+                        if self.config.global_split_set_control
+                        else items_chosen
+                    )
+                    this_item = np.random.choice(this_trial_item_pool, p=None).astype(
+                        int
+                    )
 
                     # the below while-loop samples items until drawing one that's different from N ago
-                    this_item = np.random.choice(items_chosen, p=None).astype(int)
                     while (len(this_item_seq) >= self.config.n_back) and (
                         this_item == this_item_seq[-self.config.n_back]
                     ):
-                        this_item = np.random.choice(items_chosen, p=None).astype(int)
+                        this_item = np.random.choice(
+                            this_trial_item_pool, p=None
+                        ).astype(int)
 
                 # sample item with respect to role and make it diff from what's
                 # stored with this role
@@ -640,6 +687,8 @@ class SIRDataset(GeneratedCachedDataset):
                         ).astype(int)
                 this_label = diff
             # enforce "same" condition
+            # this is easier since we don't have to do anything special for
+            # split set: the item only depends on the past
             else:
                 if n_back:  # item same as that from N trials ago
                     this_item = this_item_seq[-self.config.n_back]

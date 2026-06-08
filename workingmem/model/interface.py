@@ -97,14 +97,26 @@ class TrainingConfig:
     # by the dataset length and batch size
     logging_steps_per_epoch: int = 5
     # 'best' saves a checkpoint each time we see a drop in validation loss, named 'best_model.pth'
-    # 'epoch' saves a checkpoint at the end of each epoch named 'epoch_{epoch}.pth' in a subdirectory called 'checkpoints/'
+    # 'epoch' saves a checkpoint at the end of 20 epochs named 'epoch_{epoch}.pth' in a subdirectory called 'checkpoints/'
     save_strategy: typing.Literal["best", "epoch"] = "best"
     # if strategy is 'epoch', then we save every X epochs determined by `save_steps`
     save_steps: typing.Union[int, None] = None
 
-    do_test: bool = True  # evaluate the model on the test set after training?
+    do_test: typing.Union[bool, None] = (
+        True  # evaluate the model on the test set after training?
+    )
 
-    mask_answer_tokens: bool = True  # whether we train the model using answer tokens in the input sequence or not
+    mask_answer_tokens: typing.Union[bool, None] = (
+        True  # whether we train the model using answer tokens in the input sequence or not.
+    )
+    interleaved: typing.Union[bool, None] = (
+        True  # applicable only when multiple datasets are used for training: whether to interleave or block the input datasets.
+    )
+    scaffolded: typing.Union[bool, None] = (
+        False  # applicable only when multiple datasets are used for training: whether to scaffold the multiple datasets in training.
+        # scaffolding and interleaving cannot both be true at the same time! scaffolding is sequential in nature, and trains on subsequent
+        # datasets in equally-spaced-out-increments
+    )
 
 
 @dataclasses.dataclass
@@ -135,6 +147,10 @@ class TrainingHistoryEntry:
     eval_macro_acc: float
     test_acc: float
     test_macro_acc: float
+
+    sub_metrics: (
+        typing.Dict[str, float] | None
+    )  # an option to add a training history entry child object in case of using multiple datasets for training and/or evaluation
 
 
 class AbstractPytorchModel(ABC, torch.nn.Module):

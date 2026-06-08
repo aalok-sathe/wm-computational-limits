@@ -2,6 +2,8 @@
 from pandas.core.frame import DataFrame
 
 from itertools import product
+from collections import defaultdict
+
 import typing
 from functools import lru_cache
 import logging
@@ -13,14 +15,39 @@ from tqdm.auto import tqdm
 import wandb
 import dacite
 
-wandbapi = wandb.Api()
-
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
 )
 logger = logging.getLogger("workingmem")
 logger.setLevel(logging.INFO)
+
+try:
+    wandbapi = wandb.Api()
+except wandb.errors.UsageError:
+    logger.warning(
+        "wandb API initialization failed. if you are trying to use wandb features, make sure you have logged in to wandb using `wandb login` command and that you have access to the project and sweep you are trying to fetch runs from."
+    )
+
+    class _AttrMaker:
+        """
+        duck typed class allowing indefinitely many recursive __getattr__ calls
+        to help pass github actions without needing to log into W&B
+        """
+
+        def __init__(self, name=""):
+            self.name = name
+
+        def __getattr__(self, name):
+            return _AttrMaker(self.name + "." + name)
+
+        def __repr__(self) -> str:
+            return f"<placeholder for wandbapi.{self.name}>"
+
+        def __str__(self) -> str:
+            return repr(self)
+
+    wandbapi = _AttrMaker("wandbapi")
 
 
 def print_gpu_mem(obj: typing.Any = None):
@@ -65,17 +92,32 @@ def _get_wandb_runs(
         metrics["run_id"] = run.name
         metrics["sweep_id"] = sweep_id
         config: typing.Dict[str, typing.Any] = run.config
+        # print(config)
         all_configs = {
-            **config["model"],
-            **config["trainer"],
-            **config["dataset"],
+            **config,
         }
+        for additional_key in ["model", "dataset", "trainer"]:
+            all_configs.update(config.get(additional_key, {}))
+
+        new_columns = {}
         for key in all_configs:
-            metrics[key] = all_configs[key]
+            value = all_configs[key]
+            # if value is not a singleton, we wrap it in a tuple
+            if isinstance(value, list):
+                value = " ".join(map(str, value))
+            new_columns[key] = value
+
+        try:
+            metrics = pd.concat(
+                [metrics, pd.DataFrame(new_columns, index=metrics.index)], axis=1
+            )
+        except ValueError as e:
+            print(e, new_columns)
+            exit()
 
         try:
             dfs += [metrics]
-        except KeyError as e:
+        except KeyError:
             # this run doesn't have enough data to have 'epoch' as a key; skip for now
             print(
                 f"\tkey `epoch` not found. skipping run: https://wandb.ai/{prefix}/{project_name}/runs/{run.name}"
@@ -111,7 +153,8 @@ def get_wandb_runs(
 
     if config_path is not None:
         assert "sweep_dict" in str(config_path), (
-            f"are you sure you passed the correct config? input: {config_path}"
+            f"are you sure you passed the correct config? "
+            f"expected input is 1 YAML file created as a result of creating a sweep. what you provided as input: {config_path}"
         )
         with Path(config_path).open("r") as f:
             created_config = yaml.load(f, yaml.FullLoader)
@@ -122,9 +165,12 @@ def get_wandb_runs(
             sweep_id = sweep["sweep_id"]
             prefix = sweep["username"]
             sweep_df = get_wandb_runs(project_name, sweep_id, prefix)
-            sweep_df_grouped_by_epoch = (
-                sweep_df.groupby(["epoch", "run_id"]).first().reset_index()
-            )
+            try:
+                sweep_df_grouped_by_epoch = (
+                    sweep_df.groupby(["epoch", "run_id"]).first().reset_index()
+                )
+            except KeyError as e:
+                logger.warning(f"SKIPPING {sweep=} due to {e}")
 
             dest = Path(config_path).parent.parent / "downloaded_runs"
             dest.mkdir(exist_ok=True)
@@ -162,7 +208,7 @@ def parse_config(config) -> typing.Generator[dict, None, None]:
             # we iterate through conditoinal variable entries in order
             # and check if
             kwargs = {}
-            for cond_variable_set in conditional_variables:
+            for cond_variable_set in conditional_variables or []:
                 index = cond_variable_set["index"]
                 if all(parameters[k] == v for k, v in index.items()):
                     this_kwargs = cond_variable_set["kwargs"]
@@ -202,3 +248,95 @@ def parse_config(config) -> typing.Generator[dict, None, None]:
         keys, values = zip(*config.items())
         for this_values_set in product(*values):
             yield dict(zip(keys, this_values_set))
+
+
+def annotate_trial_seq(
+    preds: typing.List[str], labels: typing.List[str], trial_seq: str
+) -> pd.DataFrame:
+    """
+    processes trials of type (instr role_n item_m ans) where instr is one of St/Ig standing for
+    store or ignore. first, we compile a unique list of roles appearing in this trial
+    then we create a state (dict) mapping each role to the item it currently stores. at each trial,
+    if the instruction is 'store', we update the state to store the item for that role.
+    also in the state, we store the time elapsed since last accessing that role for any instruction,
+    as well as last _updating_ that role (i.e., St instruction). we also annotate the current trial's
+    answer (same/diff) as well as whether the model got the prediction right (preds vs labels).
+    """
+    trial_seq: typing.List[str] = trial_seq.split()
+    roles = set()
+    for token in trial_seq:
+        if token.startswith("reg_"):
+            roles.add(token)
+    state = defaultdict(
+        lambda: dict(time_since_access=-1, time_since_update=-1, num_accesses=0)
+    )
+    annotated_seq = []
+    for i in range(0, len(trial_seq), 4):
+        instr, role, item, ans = trial_seq[i : i + 4]
+
+        for r in roles:
+            if r == role:
+                state[r]["num_accesses"] += 1
+                continue
+            if state[r]["time_since_access"] >= 0:
+                state[r]["time_since_access"] += 1
+            if state[r]["time_since_update"] >= 0:
+                state[r]["time_since_update"] += 1
+
+        annotated_seq.append(
+            {
+                "trial_ix": i // 4,
+                "instr": instr,
+                "role": role,
+                "item": item,
+                "ans": ans,
+                "correct": int(preds[i // 4] == labels[i // 4]),
+                "label": labels[i // 4],
+                **state[role].copy(),
+            }
+        )
+        state[role]["time_since_access"] = 0
+        if instr == "St":
+            state[role]["time_since_update"] = 0
+
+    return pd.DataFrame(annotated_seq)
+
+
+def load_model_and_dataset(ckpt_path, split="test"):
+    """
+    given a checkpoint path, load the model and the corresponding dataset it was most
+    recently trained on. we can infer the model class from the config.yaml file
+    in the checkpoint directory, and we can infer the dataset path from the
+    history.yaml file in the checkpoint directory.
+    """
+    import torch
+    from workingmem.model import (
+        LSTMModelWrapper,
+        RNNModelWrapper,
+        TransformerModelWrapper,
+    )
+    from workingmem.task import SIRDataset
+
+    model_config = yaml.load(
+        (ckpt_path / "config.yaml").open("r").read(), Loader=yaml.SafeLoader
+    )
+    model_class = model_config["model_class"]
+    if model_class == "lstm":
+        model_class = LSTMModelWrapper
+    elif model_class == "rnn":
+        model_class = RNNModelWrapper
+    elif model_class == "transformer":
+        model_class = TransformerModelWrapper
+
+    model = model_class.from_checkpoint_dir(ckpt_path)
+
+    # also load the dataset corresponding to the model which is specified in the model's history.yaml file
+    hist = yaml.load(
+        (ckpt_path / "history.yaml").open("r").read(), Loader=yaml.SafeLoader
+    )
+    dataset_path = Path(hist[-1]["dataset_path"])
+    dataset = SIRDataset.from_path(dataset_path, split=split, generate=False)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.model.to(device)
+    return model, dataset

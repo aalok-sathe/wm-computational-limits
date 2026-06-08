@@ -9,12 +9,17 @@
 # between the values.
 
 independent_variables:
+
   - dataset.td_prob: [0, 1]
   - dataset.role_n_congruence: [0]
-  - dataset.n_back: [5]
-    dataset.concurrent_reg: [5]
-  - model.model_class: ['transformer']
-  - model.from_pretrained: ['model_checkpoints/e5gvjald', 'model_checkpoints/7c2bild8']
+  - dataset.n_back: ['2 3 4']
+    dataset.concurrent_reg: ['2 3 4']
+
+  - model.model_class: ['rnn', 'lstm', 'transformer']
+
+  - trainer.epochs: [60]
+  - trainer.save_strategy: ['epoch']
+    trainer.save_steps: [20]
 
 #### conditional variables
 # this section contains conditional variables---they aren't used to define
@@ -36,14 +41,75 @@ independent_variables:
 # should go at the very end. 
 
 conditional_variables:
-### transformer
+  ################################################################ 
+  # REF-BACK
+  ################################################################ 
+  # transformer
   - index:
       model.model_class: 'transformer'
       dataset.td_prob: 0
     kwargs:
-      trainer.learning_rate: 2.2e-4
+      trainer.learning_rate: 1.7e-4
+      model.n_layers: 2
+      model.d_model: 512
+      model.d_head: 256
+      model.n_heads: 4
+      # model.d_hidden:
+  # rnn
+  - index:
+      model.model_class: 'rnn'
+      dataset.td_prob: 0
+    kwargs:
+      trainer.learning_rate: 2e-4
+      model.n_layers: 2
+      model.d_model: 256
+      # model.d_head:
+      # model.n_heads:
+      model.d_hidden: 256
+  # lstm
+  - index:
+      model.model_class: 'lstm'
+      dataset.td_prob: 0
+    kwargs:
+      trainer.learning_rate: 1e-3
+      model.n_layers: 2
+      model.d_model: 256
+      # model.d_head:
+      # model.n_heads: 
+      model.d_hidden: 256
+  ################################################################ 
+  # N-BACK
+  ################################################################ 
+  # transformer
   - index:
       model.model_class: 'transformer'
       dataset.td_prob: 1
     kwargs:
-      trainer.learning_rate: 2.2e-4
+      trainer.learning_rate: 7e-4
+      model.n_layers: 2
+      model.d_model: 512
+      model.d_head: 256
+      model.n_heads: 4
+      # model.d_hidden:
+  # rnn
+  - index:
+      model.model_class: 'rnn'
+      dataset.td_prob: 1
+    kwargs:
+      trainer.learning_rate: 2e-4
+      model.n_layers: 2
+      model.d_model: 512
+      # model.d_head:
+      # model.n_heads:
+      model.d_hidden: 256
+  # lstm
+  - index:
+      model.model_class: 'lstm'
+      dataset.td_prob: 1
+    kwargs:
+      trainer.learning_rate: 3.5e-4
+      model.n_layers: 2
+      model.d_model: 512
+      # model.d_head:
+      # model.n_heads:
+      model.d_hidden: 256
