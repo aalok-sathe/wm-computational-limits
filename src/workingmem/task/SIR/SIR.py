@@ -31,6 +31,11 @@ logger = logging.getLogger("workingmem")
 
 @dataclass
 class SIRConfig(GeneratedCachedDatasetConfig):
+    """
+    configuration for a reference-back or N-back task instance, implemented
+    using the store, ignore, recall trial atoms. see below for individual options.
+    """
+
     n_reg: int = 50
     """total number of registers in vocab to draw from"""
     n_items: int = 50
@@ -259,18 +264,16 @@ class SIRDataset(GeneratedCachedDataset):
         np.random.seed(self.config.seed or 42)
         random.seed(self.config.seed or 42)
         self.reg_heldout_items = {
-            i: tuple(
-                [
-                    *map(
-                        int,
-                        np.random.choice(
-                            range(self.config.n_items),
-                            self.config.heldout_items_per_reg,
-                            replace=False,
-                        ),
-                    )
-                ]
-            )
+            i: tuple([
+                *map(
+                    int,
+                    np.random.choice(
+                        range(self.config.n_items),
+                        self.config.heldout_items_per_reg,
+                        replace=False,
+                    ),
+                )
+            ])
             for i in range(self.config.n_reg)
         }  # len = n_reg
 
@@ -485,18 +488,18 @@ class SIRDataset(GeneratedCachedDataset):
         )
         # of these, we exclude the forbidden items if we are in train mode
         if mode == "train":
-            item_range = np.array(
-                [i for i in allowable_item_range if i not in forbidden_items]
-            )
+            item_range = np.array([
+                i for i in allowable_item_range if i not in forbidden_items
+            ])
         elif mode == "challenge":
             # in this special case, we want to sample items in such a way that there is a high
             # prevalence of using held-out register-item combinations (but not every register-item
             # combination can be held-out, because we will likely have a
             # non-overlapping held-out item subrange for each register)
             # for now, let's just sample from the set of forbidden items
-            item_range = np.array(
-                [i for i in allowable_item_range if i in forbidden_items]
-            )
+            item_range = np.array([
+                i for i in allowable_item_range if i in forbidden_items
+            ])
             if len(item_range) < self.config.concurrent_items:
                 raise ValueError(
                     f"not enough items to sample from in challenge mode: {item_range=}; {self.config.concurrent_items=}"
@@ -731,20 +734,18 @@ class SIRDataset(GeneratedCachedDataset):
             "locality": self.config.locality,
             # lots of gymnastics here to make sure the register_item_pool is serializable
             "split_set_control": tuple(
-                (
-                    {int(k): tuple(v.tolist()) for k, v in register_item_pool.items()}
-                ).items()
+                ({
+                    int(k): tuple(v.tolist()) for k, v in register_item_pool.items()
+                }).items()
             ),
             "heldout_items_used": tuple(
                 (
                     int(r),
-                    tuple(
-                        [
-                            *set(self.reg_heldout_items[r]).intersection(
-                                set(items_chosen.tolist())
-                            )
-                        ]
-                    ),
+                    tuple([
+                        *set(self.reg_heldout_items[r]).intersection(
+                            set(items_chosen.tolist())
+                        )
+                    ]),
                 )
                 for r in regs_chosen
             ),

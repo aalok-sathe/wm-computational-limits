@@ -4584,9 +4584,9 @@ wheels = [
 ]
 
 [[package]]
-name = "wm-computational-limits"
-version = "0.1.0"
-source = { virtual = "." }
+name = "workingmem"
+version = "0.1.1"
+source = { editable = "." }
 dependencies = [
     { name = "dacite" },
     { name = "einops" },

@@ -1,6 +1,6 @@
 [project]
-name = "wm_computational_limits"
-version = "0.1.0"
+name = "workingmem"
+version = "0.1.1"
 description = "Investigating the nature of working memory limitations using computational modeling."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,6 +20,13 @@ dependencies = [
     "tyro>=1.0.0",
 ]
 
+[build-system]
+requires = ["uv_build>=0.11.20,<0.12"]
+build-backend = "uv_build"
+
+[project.scripts]
+swim = "workingmem:entrypoint"
+
 [dependency-groups]
 dev = [
     "anywidget>=0.9.16",
@@ -35,7 +42,15 @@ dev = [
 [tool.setuptools]
 packages = ['workingmem']
 
+[tool.setuptools.package-dir]
+"" = "workingmem"
+
 [tool.ruff]
 # line-length = 90
 
 [tool.uv.sources]
+wm_computational_limits = { path = "workingmem" }
+
+[tool.uv]
+package = true
+
