@@ -1,6 +1,6 @@
 """
-.. include:: ../README.md
-.. include:: ../tutorials/index.md
+.. include:: ../../README.md
+.. include:: ../../tutorials/index.md
 """
 
 import typing
