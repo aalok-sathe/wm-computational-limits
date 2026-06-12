@@ -1,6 +1,8 @@
 """
 .. include:: ../../README.md
-.. include:: ../../tutorials/index.md
+.. include:: ./tutorials/README.md
+
+# API Documentation
 """
 
 import typing
@@ -29,11 +31,13 @@ from workingmem.model import (
     TransformerModelWrapper,
     RNNModelWrapper,
     LSTMModelWrapper,
+    LSTMMultiCellWrapper,
+    RIMModelWrapper,
 )
 from workingmem.task import SIRDataset, SIRConfig, _T_dataset_or_collection_of_datasets
 from workingmem.utils import print_gpu_mem, wandbapi
-import workingmem.model
-import workingmem.task.SIR
+import workingmem
+
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
@@ -122,9 +126,17 @@ class MainConfig:
 
 def main(config: MainConfig):
     """
-    given a config, train a model on an SIR dataset, evaluate, and test, all described
-    as per config. wandb is used for logging regardless of whether this is a 'sweep'.
+    This 'main' function orchestrates a process of training and evaluating a particular model on a
+    specified data distribution. The model and data distribution details are specified as part of
+    the ModelConfig and SIRConfig instances under ```config``` (```MainConfig```).  Training hyperparameters
+    are provided using a TrainerConfig instance, also within `config`.
+
+    Supports single-task training with a fixed `workingmem.task.SIRConfig`/`n_back` value, or multi-task
+    meta-training by mixing datasets across multiple `concurrent_reg` values. Generates
+    and caches datasets to disk as needed. Logs training progress and metrics to
+    Weights & Biases as per `workingmem.WandbConfig`.
     """
+
     supplied_batch_size = config.trainer.batch_size
     config.trainer.batch_size = 256
     logger.warning(
@@ -276,6 +288,10 @@ def main(config: MainConfig):
         model = RNNModelWrapper(config.model)
     elif config.model.model_class == "lstm":
         model = LSTMModelWrapper(config.model)
+    elif config.model.model_class == "lstm_multi_cell":
+        model = LSTMMultiCellWrapper(config.model)
+    elif config.model.model_class == "rim":
+        model = RIMModelWrapper(config.model)
     else:
         raise ValueError(f"unknown model class: {config.model.model_class}")
 

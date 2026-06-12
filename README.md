@@ -1,14 +1,10 @@
-# `sWiM` 🏊: simulation of working memory management with neural networks
+<h2>  <code>sWiM</code> 🏊: simulation of working memory management with neural networks  </h2>
 
-- [`sWiM` 🏊: simulation of working memory management with neural networks](#swim--simulation-of-working-memory-management-with-neural-networks)
-  - [Introduction](#introduction)
-  - [Install](#install)
-  - [Documentation](#documentation)
-    - [CLI invocation](#cli-invocation)
-      - [Options](#options)
-  - [References](#references)
-- [Tutorials](#tutorials)
-  - [Create your first experiment sweep](#create-your-first-experiment-sweep)
+- [Introduction](#introduction)
+- [Usage](#usage)
+- [Install](#install)
+  - [CLI Options](#cli-options)
+- [References](#references)
 
 ## Introduction
 The [`swim`](https://aalok-sathe.github.io/working-memory) computational modeling framework serves to enable computational simulations of working memory tasks. 
@@ -23,7 +19,7 @@ to work with the rest of the framework as long as they provide a wrapper
 that conforms with the 
 [model wrapper interface](https://aalok-sathe.github.io/working-memory/workingmem/model.html#ModelWrapper).
 Similarly, users can use the default supported Reference-Back task from
-Rac-Lubashevsky & Kessler, 2016, implemented here, or provide their own implementation
+[Rac-Lubashevsky & Kessler (2016)](#references) implemented here, or provide their own implementation
 that conforms to the 
 [dataset interface](https://aalok-sathe.github.io/working-memory/workingmem/task/interface.html#GeneratedCachedDataset).
 
@@ -38,33 +34,99 @@ same condition-based tags, allowing precise documentation of the entire training
 history of a computational model and subsequent experiments on pretrained
 models.
 
+<h3> Config-driven experimentation </h3>
 
-For programmatic use, components of the library can be imported in your program: `import workingmem`, or `from workingmem import LSTMModelWrapper, SIRDataset`.
+You could run an end-to-end experiment fully without writing any code!
+A config-driven design allows you to specify an experiment in a YAML file. Furthermore, configs allow specifying lists of values a variable can take, and spawn many conditions of the experiment (e.g., contrasting two model architectures). However, there may be variables that you do not want to vary across conditions, such as tuned hyperparameters that don't have bearing on the experimental conditions. To accomodate this, [a config has two sections](https://aalok-sathe.github.io/working-memory/workingmem#config-structure), _independent variables_ and _conditional variables_.  
 
-To exhaustively see the CLI options, run `python -m workingmem -h`.
+
+```mermaid
+flowchart LR
+  config(config with independent variables
+  <code>Var X:1..N</code> 
+  <code>Var Y:1..M</code>) 
+  config --> S([<code>sWiM</code> slurm orchestrator]):::swim
+  S --> C1[experimental condition 1
+  <i>logged to W&B</i>]
+  S --> Cx[experimental condition ...
+  <i>logged to W&B</i>]
+  S --> C2[experimental condition N*M
+  <i>logged to W&B</i>]
+
+  C1:::expt --> A(<code>sWiM</code> result aggregator)
+  C2:::expt --> A
+  Cx:::expt --> A:::swim
+
+  A --> R(<b>results!</b>):::result
+
+  classDef result fill:#FFCCFB,stroke:#000,stroke-width:4px,color:#000000
+  classDef expt fill:#21FF2124,stroke:#F6A981,stroke-width:3px,color:#ff
+  classDef swim fill:#00A3DA,stroke:#000,stroke-width:3px,color:#000
+
+
+```
+
+## Usage
+Reference the API documentation along with helpful high-level descriptions [here](https://aalok-sathe.github.io/working-memory). 
+We have a few tutorials to guide you through how to use this library and framework, [here](https://aalok-sathe.github.io/working-memory/workingmem.html#config-structure). Tutorials cover many use-cases, including how to write a config to orchestrate a simple experiment with multiple experimental conditions and dependent/conditional variables.
+
+
+
 
 ## Install
 1.  **install `uv`** 
 
-    `sWiM` uses `uv` as its dependency manager. you'll need to install it if you don't already have it. visit https://github.com/astral-sh/uv#installation to install.
+    `sWiM` uses `uv` as its dependency manager. you'll need to install it if you don't already have it. it is lightweight and very quick to install. visit https://github.com/astral-sh/uv#installation for instructions.
 
 1. **install `sWiM`**
-    1. using `uv`:
-        - `uv sync`: install the python virtual environment with all requisite packages (needed once)
-        - `. ./.venv/bin/activate`: activate the virtual environment in the directory of the library
-        (needed each time you log in to your computer or compute cluster node until you exit/log out of that session)
-    1. using `pip`:
-       - ```pip install .```
+      - `uv sync` in the project root directory (this is the directory where the `pyproject.toml` file lives): install the python virtual environment with all requisite packages (needed once)
+      - `. ./.venv/bin/activate`: activate the virtual environment in the directory of the library---execute this also from the project root directory, where the `pyproject.toml` file lives.
+      (needed each time you log in to your computer or compute node until you exit/log out of that session)
+    
 
-1. **use with Weights and Biases (recommended)**
+```mermaid
+flowchart TD
+  subgraph R [library root]
+    subgraph v [.venv]
+      binactivate( <code>.venv/bin/activate</code> )
+      packages[installed dependencies]
+    end
+    p[<code>pyproject.toml</code>]
+
+    p -->| <code>`uv sync`</code> creates | v
+
+    subgraph wm [workingmem source code]
+      model
+      subgraph task
+        SIR(SIR)
+      end
+    end
+
+  end
+
+  subgraph experiment [experiment1]
+    condition1
+    condition2
+    condition3
+    RUN_ALL.sh
+  end
+
+  condition1 ---o RUN_ALL.sh
+  condition2 ---o RUN_ALL.sh 
+  condition3 ---o RUN_ALL.sh
+
+  config1.yaml[<code>. .venv/bin/activate</code>] -->| <code>swim \n--wandb.create_sweep\n--wandb.from_config PATH/TO/CONFIG</code>\ncreates experimental conditions | experiment 
+  RUN_ALL.sh --> results!
+
+```
+
+3. **use with Weights and Biases (recommended)**
     - `sWiM` is best used alongside weights and biases. for this you will have to create an account on the [W&B website](https://wandb.ai). there are many ways in which to do so, including using your existing github account.
     it's possible to use `sWiM` without a W&B integration at the
     cost of full functionality (W&B is mainly used as a database for creating and orchestrating experiments on top of the core `sWiM` framework; you can still call `sWiM` and train/evaluate models just the same via CLI or a programmatic interface when imported as a library.)
 
-## Documentation
-Find the documentation and tutorials [here](https://aalok-sathe.github.io/working-memory).
 
-### CLI invocation
+### CLI Options
 ```bash
 python -m workingmem 
 --------------------
@@ -76,8 +138,9 @@ python -m workingmem
     
 ```
 
-#### Options
-- [Model options](https://aalok-sathe.github.io/working-memory/workingmem/model.html#ModelConfig) are passed in as `--model.XYZ` for a parameter titled `XYZ`. This sets model hyperparameters such as the number of layers, dimensionality, etc.
+<h4> Options</h4>
+
+- [Model options](https://aalok-sathe.github.io/working-memory/workingmem/model.html#ModelConfig) are passed in as `--model.XYZ` for a parameter titled `XYZ`. This sets model parameters and hyperparamas such as the model class (e.g., `lstm`), number of layers, dimensionality, etc.
 - [Dataset options](https://aalok-sathe.github.io/working-memory/workingmem/task/SIR/SIR.html#SIRConfig) are passed in as `--dataset.XYZ` for an option titled `XYZ` to set dataset parameters such as `concurrent_roles`, `n_back`, `n_train`, `n_trials`, etc.
 - [Trainer options](https://aalok-sathe.github.io/working-memory/workingmem/model.html#TrainingConfig) are passed in as `--trainer.XYZ` for an option titled `XYZ` to set trainer hyperparameters such as `learning_rate`.
 - [W&B integration options](https://aalok-sathe.github.io/working-memory/workingmem.html#WandbConfig) are passed in as `--wandb.XYZ` for an option titled `XYZ` to use W&B integration directives such as `create_sweep` or `run_sweep [SWEEP_ID]` .
@@ -89,16 +152,5 @@ python -m workingmem
 - O’Reilly, R. C., & Frank, M. J. (2006). Making Working Memory Work: A Computational Model of Learning in the Prefrontal Cortex and Basal Ganglia. _Neural Computation, 18_(2), 283–328. https://doi.org/10.1162/089976606775093909
 
 
-# Tutorials
 
-## Create your first experiment sweep
-1. identify manipulations of interest (see what variations the library already supports using `python -m workingmem -h`).
-2. write/modify a config defining experimental conditions ([example](./configs/sample_conditional_config))
-    - configs follow an "independent variables" and "conditional variables" format---independent variables are enumerated as lists
-      that yield a cross-product over all possible combinations of their variation. "conditional variables" are typically hyperparameters
-      that need to be looked up dependent on the particular condition.  
-3. use `python -m workingmem --wandb.create_sweep` along with the flag `--wandb.from_config [path/to/config]` to define individual experimental conditions.
-  at this point, the library evaluates a cross-product over all possible conditions in your experiment and creates individual
-  W&B "sweeps" for each condition. this enables separate tracking of the progress of experiments in a web browser, as well as unique-ID-based
-  retrieval after the experiment finishes for clean, reproducible science.
 
