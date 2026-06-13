@@ -19,13 +19,13 @@ import dacite
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
 )
-logger = logging.getLogger("workingmem")
-logger.setLevel(logging.INFO)
+_logger = logging.getLogger("workingmem")
+_logger.setLevel(logging.INFO)
 
 try:
     wandbapi = wandb.Api()
 except wandb.errors.UsageError:
-    logger.warning(
+    _logger.warning(
         "wandb API initialization failed. if you are trying to use wandb features, make sure you have logged in to wandb using `wandb login` command and that you have access to the project and sweep you are trying to fetch runs from."
     )
 
@@ -57,17 +57,17 @@ def print_gpu_mem(obj: typing.Any = None):
     import torch
 
     if torch.cuda.is_available():
-        logger.info(
+        _logger.info(
             f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB, "
             f"reserved: {torch.cuda.memory_reserved() / 1024**3:.2f} GB"
         )
         if obj is not None:
-            logger.info(
+            _logger.info(
                 f"GPU memory allocated for {obj.__class__.__name__}: "
                 f"{torch.cuda.memory_allocated(obj) / 1024**3:.2f} GB"
             )
     else:
-        logger.info("No GPU available; no memory report.")
+        _logger.info("No GPU available; no memory report.")
 
 
 @lru_cache(maxsize=None)
@@ -170,7 +170,7 @@ def get_wandb_runs(
                     sweep_df.groupby(["epoch", "run_id"]).first().reset_index()
                 )
             except KeyError as e:
-                logger.warning(f"SKIPPING {sweep=} due to {e}")
+                _logger.warning(f"SKIPPING {sweep=} due to {e}")
 
             dest = Path(config_path).parent.parent / "downloaded_runs"
             dest.mkdir(exist_ok=True)
@@ -194,6 +194,19 @@ def _flatten_collection_of_tuples(
 
 
 def parse_config(config) -> typing.Generator[dict, None, None]:
+    """
+    Yield parameter dictionaries from supplied YAML experiment config.
+    (For how to structure a config to define an experiment, see the [tutorial here](http://localhost:8080/workingmem.html#config-structure).)
+
+    If config contains "independent_variables", each dict entry's values are zipped (covary)
+    and different entries are combined with a Cartesian product; optional "conditional_variables"
+    provide index-based kwargs merged into the resulting parameters. Otherwise treats config
+    as a flat mapping and yields the Cartesian product of its value lists.
+
+    Yields one dict per parameter combination. Relies on itertools.product and a helper
+    flatten_collection_of_tuples to expand covarying keys/values. Matching for conditional
+    entries uses equality on specified keys; the first matching kwargs entry is applied.
+    """
     if "independent_variables" in config:
         independent_variables: typing.List[typing.Dict] = config[
             "independent_variables"
@@ -242,7 +255,7 @@ def parse_config(config) -> typing.Generator[dict, None, None]:
             yield parameters
 
     else:  # this means the config file just contains (key: values) entries, old-style format
-        logger.warning(
+        _logger.warning(
             "config supplied is old-style formatted; parsing assuming flat key-value structure."
         )
         keys, values = zip(*config.items())
@@ -283,18 +296,16 @@ def annotate_trial_seq(
             if state[r]["time_since_update"] >= 0:
                 state[r]["time_since_update"] += 1
 
-        annotated_seq.append(
-            {
-                "trial_ix": i // 4,
-                "instr": instr,
-                "role": role,
-                "item": item,
-                "ans": ans,
-                "correct": int(preds[i // 4] == labels[i // 4]),
-                "label": labels[i // 4],
-                **state[role].copy(),
-            }
-        )
+        annotated_seq.append({
+            "trial_ix": i // 4,
+            "instr": instr,
+            "role": role,
+            "item": item,
+            "ans": ans,
+            "correct": int(preds[i // 4] == labels[i // 4]),
+            "label": labels[i // 4],
+            **state[role].copy(),
+        })
         state[role]["time_since_access"] = 0
         if instr == "St":
             state[role]["time_since_update"] = 0

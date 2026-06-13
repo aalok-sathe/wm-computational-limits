@@ -26,7 +26,7 @@ from workingmem.task.interface import (
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-logger = logging.getLogger("workingmem")
+_logger = logging.getLogger("workingmem")
 
 
 @dataclass
@@ -783,7 +783,7 @@ class SIRDataset(GeneratedCachedDataset):
                 try:
                     trial = self.generate_trial_sequence(mode=mode)
                 except ValueError as e:
-                    logger.warning(f"failed to generate single trial due to: {e}")
+                    _logger.warning(f"failed to generate single trial due to: {e}")
                     continue
                 fstrial = SIRDataset._serialize_trial(trial)
                 if fstrial in examples:
@@ -802,7 +802,7 @@ class SIRDataset(GeneratedCachedDataset):
         pairings are held-out during training/validation and only appear during testing,
         and passes appropriate kwargs to `generate_trial_sequence` to enforce this.
         """
-        logger.info("generating data for SIR task")
+        _logger.info("generating data for SIR task")
 
         # seed the random number generator
         if self.config.seed is not None:

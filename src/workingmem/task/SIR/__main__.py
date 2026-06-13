@@ -5,7 +5,7 @@ import tyro
 
 from workingmem.task.SIR import SIRDataset, SIRTokenizer, SIRConfig
 
-logger = logging.getLogger("workingmem")
+_logger = logging.getLogger("workingmem")
 
 
 def main(config: SIRConfig):
