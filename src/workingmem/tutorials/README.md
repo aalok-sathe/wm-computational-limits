@@ -1,9 +1,11 @@
-# Tutorials
 
+## Tutorials
 
+### Config structure
+Configs define an experiment instance. An experiment consists of independent variables that we may want to vary along (e.g., multiple set-size or `N` values for Reference-back or N-back tasks, or multiple different model architectures). All independent variables can take on multiple values. To support string types as values, all values are wrapped in a list, even if passing a single value (e.g., `['lstm']` or `['lstm', 'rnn']`). Passing a singleton not wrapped in a list will result in an error.
 
-
-## Config structure
+#### Independent variables
+Any of the items in 
 
 ```mermaid
 flowchart TD
@@ -25,20 +27,20 @@ flowchart TD
 
     Dep --> | | D1[ condition-set D1 ]
     K1[<b>key: conditions to match</b>
-    X='lstm'; N_back=4]
+    <code>X='lstm'; N_back=4</code>]
     V1[<b>variables to apply</b>
-        1. trainer.learning rate: 1e-4
-        2. model.n_layers: 2]
+        1. <code>trainer.learning rate: 1e-4</code>
+        2. <code>model.n_layers: 2</code>]
     D1 --o K1 
     K1 --> V1
 
     Dep --> | | D2[ condition-set D2 ]
     K2[<b>key: conditions to match</b>
-    X='lstm'; Ref_back=3]
+    <code>X='lstm'; Ref_back=3</code>]
     V2[<b>variables to apply</b>
-        1. trainer.learning rate: 2e-3
-        2. model.n_layers: 2
-        3. model.d_model: 256]
+        3. <code>trainer.learning rate: 2e-3</code>
+        4. <code>model.n_layers: 2</code>
+        5. <code>model.d_model: 256</code>]
     D2 --o K2 
     K2 --> V2
 
@@ -59,27 +61,33 @@ flowchart TD
 
 ```
 
-## Creating and using the virtual environment using `uv`
+### Creating and using the virtual environment using `uv`
 ```mermaid
-flowchart TD
+flowchart LR
   subgraph R [library root]
-    subgraph v [.venv]
+    subgraph v [<code>.venv</code>]
       binactivate( <code>.venv/bin/activate</code> )
       packages[installed dependencies]
     end
-    p[<code>pyproject.toml</code>]
 
-    p -->| <code>`uv sync`</code> creates | v
+    p[<code>pyproject.toml</code>] -->| <code>`uv sync`</code> creates | v
+
 
     subgraph wm [workingmem source code]
-      model
+      subgraph model
+        LSTM(LSTM)
+        transformer( transformer )
+        _etc( etc. )
+      end
       subgraph task
         SIR(SIR)
       end
     end
 
   end
-
+  ```
+  ```mermaid
+  flowchart TD
   subgraph experiment [experiment1]
     condition1
     condition2
@@ -100,7 +108,7 @@ flowchart TD
 
 
 
-## Create your first experiment sweep
+### Create your first experiment sweep
 1. identify manipulations of interest (see what variations the library already supports using `python -m workingmem -h`).
 2. write/modify a config defining experimental conditions ([example](./configs/sample_conditional_config))
     - configs follow an "independent variables" and "conditional variables" format---independent variables are enumerated as lists

@@ -1,5 +1,6 @@
-<h2>  <code>sWiM</code> 🏊: simulation of working memory management with neural networks  </h2>
+## <h3><code>sWiM</code> 🏊: simulation of working memory management with neural networks</h3>
 
+- [sWiM 🏊: simulation of working memory management with neural networks](#swim--simulation-of-working-memory-management-with-neural-networks)
 - [Introduction](#introduction)
 - [Usage](#usage)
   - [CLI-driven usage](#cli-driven-usage)
