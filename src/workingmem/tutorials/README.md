@@ -1,5 +1,8 @@
 # Tutorials
 
+
+
+
 ## Config structure
 
 ```mermaid
@@ -55,6 +58,46 @@ flowchart TD
     style D3 fill:#217AFF24,stroke:#000,stroke-width:3px,color:#ff
 
 ```
+
+## Creating and using the virtual environment using `uv`
+```mermaid
+flowchart TD
+  subgraph R [library root]
+    subgraph v [.venv]
+      binactivate( <code>.venv/bin/activate</code> )
+      packages[installed dependencies]
+    end
+    p[<code>pyproject.toml</code>]
+
+    p -->| <code>`uv sync`</code> creates | v
+
+    subgraph wm [workingmem source code]
+      model
+      subgraph task
+        SIR(SIR)
+      end
+    end
+
+  end
+
+  subgraph experiment [experiment1]
+    condition1
+    condition2
+    condition3
+    RUN_ALL.sh
+  end
+
+  condition1 ---o RUN_ALL.sh
+  condition2 ---o RUN_ALL.sh 
+  condition3 ---o RUN_ALL.sh
+
+  config1.yaml[<code>. .venv/bin/activate</code>] -->| <code>swim \n--wandb.create_sweep\n--wandb.from_config PATH/TO/CONFIG</code>\ncreates experimental conditions | experiment 
+  RUN_ALL.sh --> results!
+
+```
+
+
+
 
 
 ## Create your first experiment sweep
