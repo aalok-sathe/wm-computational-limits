@@ -4,8 +4,9 @@
 ### Config structure
 Configs define an experiment instance. An experiment consists of independent variables that we may want to vary along (e.g., multiple set-size or `N` values for Reference-back or N-back tasks, or multiple different model architectures). All independent variables can take on multiple values. To support string types as values, all values are wrapped in a list, even if passing a single value (e.g., `['lstm']` or `['lstm', 'rnn']`). Passing a singleton not wrapped in a list will result in an error.
 
+Any of the parameters specified [here](#options-applicable-to-config-and-cli) can be used as variables.
+
 #### Independent variables
-Any of the items in 
 
 ```mermaid
 flowchart TD
@@ -62,6 +63,7 @@ flowchart TD
 ```
 
 ### Creating and using the virtual environment using `uv`
+
 ```mermaid
 flowchart LR
   subgraph R [library root]
@@ -86,27 +88,7 @@ flowchart LR
 
   end
   ```
-  ```mermaid
-  flowchart TD
-  subgraph experiment [experiment1]
-    condition1
-    condition2
-    condition3
-    RUN_ALL.sh
-  end
-
-  condition1 ---o RUN_ALL.sh
-  condition2 ---o RUN_ALL.sh 
-  condition3 ---o RUN_ALL.sh
-
-  config1.yaml[<code>. .venv/bin/activate</code>] -->| <code>swim \n--wandb.create_sweep\n--wandb.from_config PATH/TO/CONFIG</code>\ncreates experimental conditions | experiment 
-  RUN_ALL.sh --> results!
-
-```
-
-
-
-
+ 
 
 ### Create your first experiment sweep
 1. identify manipulations of interest (see what variations the library already supports using `python -m workingmem -h`).
@@ -118,3 +100,23 @@ flowchart LR
   at this point, the library evaluates a cross-product over all possible conditions in your experiment and creates individual
   W&B "sweeps" for each condition. this enables separate tracking of the progress of experiments in a web browser, as well as unique-ID-based
   retrieval after the experiment finishes for clean, reproducible science.
+
+```mermaid
+  flowchart LR
+
+    subgraph experiment [experiment1]
+      condition1[condition1]
+      condition2[condition2]
+      condition3[condition3]
+      R[<code>RUN_ALL.sh</code>]
+    end
+
+    condition1 --- R
+    condition2 --- R 
+    condition3 --- R
+
+    config1[<code>. .venv/bin/activate</code>] -->| <code>swim \n--wandb.create_sweep\n--wandb.from_config PATH/TO/CONFIG</code>\ncreates experimental conditions | experiment 
+
+    R --> results!
+
+```

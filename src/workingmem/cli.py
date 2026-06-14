@@ -122,7 +122,7 @@ def entrypoint():
         │       random seed for dataset generation as well as picking the random heldout     │
         │       combinations (default: None)                                                 │
         │ --dataset.generate, --dataset.no-generate                                          │
-        │       whether to generate the dataset if it doesnt already exist on disk,         │
+        │       whether to generate the dataset if it doesnt already exist on disk,          │
         │       or simply to initialize it to enable calling `generate_trial_sequence`       │
         │       (default: True)                                                              │
         │ --dataset.load, --dataset.no-load                                                  │
@@ -203,8 +203,8 @@ def entrypoint():
         │       also, a given role will never have any items outside of its small set of     │
         │       items                                                                        │
         │       ever occur with it                                                           │
-        │       this is used in ORielly & Frank (2002) and Soni, Traylor, et al (in prep.)  │
-        │       as a control for requiring role-addressable gating (i.e., there is never      │
+        │       this is used in ORielly & Frank (2002) and Soni, Traylor, et al (in prep.)   │
+        │       as a control for requiring role-addressable gating (i.e., there is never     │
         │       going                                                                        │
         │       to be a case when the same item is potentially stored across multiple roles  │
         │       and it needs to be differentiated). (default: None)                          │

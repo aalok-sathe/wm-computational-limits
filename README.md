@@ -87,6 +87,7 @@ swim [OR: python -m workingmem]
 
 ### Options: applicable to config and CLI
 
+<!-- [](#options-applicable-to-config-and-cli) -->
 - [Model options](https://aalok-sathe.github.io/working-memory/workingmem/model.html#ModelConfig) are passed in as `--model.XYZ` in the CLI invocation and as `model.XYZ: [...]` in the config-driven invocation of `swim`, for a parameter titled `XYZ`. This allows you to set model parameters and hyperparamas such as the model class (e.g., `lstm`), number of layers, dimensionality, etc.
 - [Dataset options](https://aalok-sathe.github.io/working-memory/workingmem/task/SIR/SIR.html#SIRConfig) are passed in as `--dataset.XYZ` for an option titled `XYZ` to set dataset parameters such as `concurrent_roles`, `n_back`, `n_train`, `n_trials`, etc.
 - [Trainer options](https://aalok-sathe.github.io/working-memory/workingmem/model.html#TrainingConfig) are passed in as `--trainer.XYZ` for an option titled `XYZ` to set trainer hyperparameters such as `learning_rate`.
@@ -117,8 +118,8 @@ swim [OR: python -m workingmem]
 
 
 ## References
-- Rac-Lubashevsky, R., & Kessler, Y. (2016). Dissociating working memory updating and automatic updating: The reference-back paradigm. _Journal of Experimental Psychology: Learning, Memory, and Cognition, 42_(6), 951–969. https://doi.org/10.1037/xlm0000219
-- O’Reilly, R. C., & Frank, M. J. (2006). Making Working Memory Work: A Computational Model of Learning in the Prefrontal Cortex and Basal Ganglia. _Neural Computation, 18_(2), 283–328. https://doi.org/10.1162/089976606775093909
+- Rac-Lubashevsky, R., & Kessler, Y. (2016). [Dissociating working memory updating and automatic updating: The reference-back paradigm.](https://doi.org/10.1037/xlm0000219) *Journal of Experimental Psychology: Learning, Memory, and Cognition, 42*(6), 951–969. 
+- O’Reilly, R. C., & Frank, M. J. (2006). [Making Working Memory Work: A Computational Model of Learning in the Prefrontal Cortex and Basal Ganglia.](https://doi.org/10.1162/089976606775093909) *Neural Computation, 18*(2), 283–328. 
 
 
 
