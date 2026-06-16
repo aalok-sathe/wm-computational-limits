@@ -9,7 +9,7 @@
 - [References](#references)
 
 ## Introduction
-The [`swim`](https://aalok-sathe.github.io/working-memory) computational modeling framework serves to enable computational simulations of working memory tasks. 
+The [`swim`](https://github.com/aalok-sathe/working-memory) computational modeling framework serves to enable computational simulations of working memory tasks. 
 A robustly-engineered framework allows researchers to define their own tasks and
 generate datasets with fine control over the parameters of those tasks. The
 framework allows for training neural models in an architecture-agnostic manner,
