@@ -34,15 +34,15 @@ jobs:
       - name: Set up Python
         run: uv python install
       - run: uv add pdoc wandb
-      - name: uv run wandb login
+      - name: wandb login
         env:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
-        run: export WANDB_API_KEY="$WANDB_API_KEY"; wandb login
+        run: export WANDB_API_KEY="$WANDB_API_KEY"; uv run wandb login
       - name: Install the project
         run: uv sync --locked --all-extras --dev
       # - run: pip install -e .
 
-      - run: uv add -e .
+      - run: uv add --dev .
 
       - run: uv run pdoc workingmem --mermaid -o docs/
 
