@@ -34,7 +34,7 @@ jobs:
       - name: Set up Python
         run: uv python install
       - run: uv add pdoc wandb
-      - name: wandb login
+      - name: uv run wandb login
         env:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
         run: export WANDB_API_KEY="$WANDB_API_KEY"; wandb login
