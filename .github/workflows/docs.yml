@@ -42,7 +42,7 @@ jobs:
         run: uv sync --locked --all-extras --dev
       # - run: pip install -e .
 
-      - run: uv add .
+      - run: uv add --dev .
 
       - run: uv run pdoc workingmem --mermaid -o docs/
 
