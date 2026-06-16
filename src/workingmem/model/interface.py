@@ -28,7 +28,9 @@ class ModelConfig:
     specific model architectures, such as transformer or RNN.
     """
 
-    model_class: str = "transformer"  # "transformer" or "rnn" or "lstm"
+    model_class: str = (
+        "lstm"  # "transformer", "rnn", "lstm", "lstm_multi_cell", or "rim"
+    )
     from_pretrained: typing.Union[str, None] = None
     """`from_pretrained` is a path to a directory containing the model checkpoints and config.yaml.
         typically:
@@ -70,6 +72,13 @@ class ModelConfig:
     # @dataclasses.dataclass
     # class RNNConfig(ModelConfig):
     d_hidden: int = 256  # hidden state dimensionality
+
+    # Multi-cell LSTM parameters
+    num_lstm_cells: int = 3  # number of parallel LSTM cells in LSTMMultiCell
+    lstm_merge_strategy: str = "gated"  # "average", "concatenate", or "gated"
+
+    # RIM (Recurrent Independent Mechanisms) parameters
+    num_mechanisms: int = 4  # number of independent mechanisms in RIM
 
 
 @dataclasses.dataclass

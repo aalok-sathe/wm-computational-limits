@@ -1283,3 +1283,281 @@ class TransformerModelWrapper(ModelWrapper):
         transformer models
         """
         raise NotImplementedError
+
+
+class LSTMMultiCell(torch.nn.Module):
+    """
+    Independent parallel LSTM cells that process input simultaneously.
+    Supports multiple output merging strategies: average, concatenate, or gated.
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        num_cells: int,
+        merge_strategy: str = "gated",
+    ):
+        """
+        Args:
+            input_size: Input feature dimension
+            hidden_size: Hidden state size per cell
+            num_cells: Number of parallel independent LSTM cells
+            merge_strategy: How to combine outputs from multiple cells
+                - "average": Simple mean pooling across cells
+                - "concatenate": Stack outputs (output_size = hidden_size * num_cells)
+                - "gated": Learned weighted combination (softmax across cells)
+        """
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_cells = num_cells
+        self.merge_strategy = merge_strategy
+
+        assert merge_strategy in (
+            "average",
+            "concatenate",
+            "gated",
+        ), f"Unknown merge strategy: {merge_strategy}"
+
+        self.cells = torch.nn.ModuleList([
+            torch.nn.LSTMCell(input_size, hidden_size) for _ in range(num_cells)
+        ])
+
+        if merge_strategy == "gated":
+            self.merge_weights = torch.nn.Parameter(torch.ones(num_cells))
+
+    def forward(
+        self, input: torch.Tensor, hx: typing.Union[tuple, None] = None
+    ) -> tuple:
+        """
+        Args:
+            input: Tensor of shape (batch_size, seq_len, input_size)
+            hx: Initial hidden/cell states (optional)
+
+        Returns:
+            output: Merged output tensor
+            (h_n, c_n): Merged final hidden and cell states
+        """
+        batch_size, seq_len, input_size = input.shape
+
+        if hx is None:
+            hx = [
+                (
+                    torch.zeros(
+                        batch_size,
+                        self.hidden_size,
+                        device=input.device,
+                        dtype=input.dtype,
+                    ),
+                    torch.zeros(
+                        batch_size,
+                        self.hidden_size,
+                        device=input.device,
+                        dtype=input.dtype,
+                    ),
+                )
+                for _ in range(self.num_cells)
+            ]
+
+        outputs = []
+
+        for t in range(seq_len):
+            x_t = input[:, t, :]
+
+            cell_outputs = []
+            for cell_idx, cell in enumerate(self.cells):
+                h_t, c_t = cell(x_t, hx[cell_idx])
+                cell_outputs.append(h_t)
+                hx[cell_idx] = (h_t, c_t)
+
+            outputs.append(torch.stack(cell_outputs, dim=0))
+
+        outputs = torch.stack(outputs, dim=2)
+
+        h_n = torch.stack([h for h, c in hx], dim=0)
+        c_n = torch.stack([c for h, c in hx], dim=0)
+
+        return self._merge_outputs(outputs, h_n, c_n)
+
+    def _merge_outputs(
+        self, outputs: torch.Tensor, h_n: torch.Tensor, c_n: torch.Tensor
+    ) -> tuple:
+        """
+        Merge outputs from all cells according to merge strategy.
+
+        Args:
+            outputs: Tensor of shape (num_cells, batch, seq_len, hidden_size)
+            h_n: Tensor of shape (num_cells, batch, hidden_size)
+            c_n: Tensor of shape (num_cells, batch, hidden_size)
+
+        Returns:
+            Merged output and hidden/cell states
+        """
+        if self.merge_strategy == "average":
+            merged_output = outputs.mean(dim=0)
+            merged_h = h_n.mean(dim=0)
+            merged_c = c_n.mean(dim=0)
+
+        elif self.merge_strategy == "concatenate":
+            c, b, s, h = outputs.shape
+            merged_output = outputs.permute(1, 2, 0, 3).reshape(b, s, c * h)
+            c, b, h = h_n.shape
+            merged_h = h_n.permute(1, 0, 2).reshape(b, c * h)
+            c, b, h = c_n.shape
+            merged_c = c_n.permute(1, 0, 2).reshape(b, c * h)
+
+        elif self.merge_strategy == "gated":
+            weights = torch.nn.functional.softmax(self.merge_weights, dim=0)
+            merged_output = torch.einsum("c, c b s h -> b s h", weights, outputs)
+            merged_h = torch.einsum("c, c b h -> b h", weights, h_n)
+            merged_c = torch.einsum("c, c b h -> b h", weights, c_n)
+
+        return merged_output, (merged_h, merged_c)
+
+
+class LSTMMultiCellWrapper(RNNModelWrapper):
+    """
+    Wrapper for LSTMMultiCell that follows the ModelWrapper pattern.
+    Inherits training and evaluation logic from RNNModelWrapper.
+    """
+
+    def __init__(self, config: ModelConfig):
+        super().__init__(config)
+
+    def _init_model(self, config: ModelConfig):
+        num_lstm_cells = getattr(config, "num_lstm_cells", 3)
+        lstm_merge_strategy = getattr(config, "lstm_merge_strategy", "gated")
+
+        class _forward_overridden_MultiCellLSTM(LSTMMultiCell):
+            def forward(
+                self, input: torch.Tensor, hx=None, return_hidden_states: bool = False
+            ):
+                if not return_hidden_states:
+                    output, _ = super().forward(input, hx)
+                    return output
+
+                all_outputs = []
+                all_h_states = []
+                all_c_states = []
+
+                batch_size, seq_len, input_size = input.shape
+                hx = None
+
+                for t in range(seq_len):
+                    x_t = input[:, t : t + 1, :]
+                    output_t, (h_t, c_t) = super().forward(x_t, hx)
+                    all_outputs.append(output_t)
+                    all_h_states.append(h_t)
+                    all_c_states.append(c_t)
+                    hx = (h_t, c_t)
+
+                all_outputs = torch.cat(all_outputs, dim=1)
+                all_h_states = torch.stack(all_h_states, dim=1)
+                all_c_states = torch.stack(all_c_states, dim=1)
+
+                return all_outputs, (all_h_states, all_c_states)
+
+        self.model = torch.nn.Sequential(
+            OrderedDict([
+                ("embed", torch.nn.Embedding(config.d_vocab, config.d_model)),
+                (
+                    "lstm",
+                    _forward_overridden_MultiCellLSTM(
+                        input_size=config.d_model,
+                        hidden_size=config.d_hidden,
+                        num_cells=num_lstm_cells,
+                        merge_strategy=lstm_merge_strategy,
+                    ),
+                ),
+                ("unembed", torch.nn.Linear(config.d_hidden, config.d_vocab)),
+            ])
+        )
+
+
+class RIMModelWrapper(ModelWrapper):
+    """
+    Wrapper for Recurrent Independent Mechanisms (RIM) model.
+    Follows the ModelWrapper pattern for training and evaluation.
+    """
+
+    def __init__(self, config: ModelConfig):
+        super().__init__(config)
+
+    def _init_model(self, config: ModelConfig):
+        try:
+            from recurrent_independent_mechanisms import RIM
+        except ImportError:
+            raise ImportError(
+                "RIM not installed. Install with: "
+                "pip install git+https://github.com/dido1998/Recurrent-Independent-Mechanisms"
+            )
+
+        num_mechanisms = getattr(config, "num_mechanisms", 4)
+
+        self.model = torch.nn.Sequential(
+            OrderedDict([
+                ("embed", torch.nn.Embedding(config.d_vocab, config.d_model)),
+                (
+                    "rim",
+                    RIM(
+                        input_size=config.d_model,
+                        hidden_size=config.d_hidden,
+                        num_mechanisms=num_mechanisms,
+                    ),
+                ),
+                ("unembed", torch.nn.Linear(config.d_hidden, config.d_vocab)),
+            ])
+        )
+
+    def get_representations_over_sequence(
+        self,
+        trial_sequence: typing.Dict[str, torch.Tensor],
+        mask_answer_tokens: bool = True,
+    ):
+        """
+        Extract internal representations across the sequence.
+
+        Returns dict with keys: embeddings, rim_outputs, logits
+        """
+        trial_sequence["token_ids"] = trial_sequence["token_ids"].to(self.device)
+
+        if mask_answer_tokens and "answer_locations" in trial_sequence:
+            answer_locs = trial_sequence["answer_locations"].to(self.device)
+            answer_tokens = trial_sequence.get("answer_token_ids")
+        else:
+            answer_locs = None
+            answer_tokens = None
+
+        embed = self.model.embed
+        rim = self.model.rim
+        unembed = self.model.unembed
+
+        with torch.no_grad():
+            embeddings = embed(trial_sequence["token_ids"])
+
+            rim_out = rim(embeddings)
+            if isinstance(rim_out, tuple) and len(rim_out) == 2:
+                seq_out, mechanism_states = rim_out
+            else:
+                seq_out = rim_out
+                mechanism_states = None
+
+            logits = unembed(seq_out)
+
+            result = {
+                "embeddings": embeddings,
+                "rim_outputs": seq_out,
+                "logits": logits,
+            }
+
+            if mechanism_states is not None:
+                result["mechanism_states"] = mechanism_states
+
+            return result
+
+    def _get_nn_sequential_block_labels(self, compat: bool = False) -> tuple:
+        embed_label, main_label, unembed_label = "embed", "rim", "unembed"
+        if compat:
+            embed_label, main_label, unembed_label = "0", "1", "2"
+        return embed_label, main_label, unembed_label
