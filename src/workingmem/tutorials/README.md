@@ -98,11 +98,10 @@ flowchart LR
     #### independent_variables
     # this section contains a list of dictionaries, each containing 
     #   key: [values]
-    # pairs. any independent variables that co-vary are grouped into a single dictionary whose values are the same length. a zip() over the values is used in the product between the values.
+    # pairs. any independent variables that co-vary are grouped into a single dictionary whose values are the same length. a zip() over the values is used in the product between the values. any values not specified are taken from library defaults (see [-h] or the options section at https://aalok-sathe.github.io/working-memory/workingmem.html#options).
     
     independent_variables:
       - dataset.td_prob: [0]
-      - dataset.role_n_congruence: [0]
       - dataset.n_back: [3,4,5,6]
         dataset.concurrent_reg: [3,4,5,6]
       - model.model_class: ['rnn', 'lstm', 'transformer']
@@ -112,13 +111,18 @@ flowchart LR
 
     conditional_variables:
       - index:
-          model.model_class: 'transformer'
+          # applies when the model is an lstm and the task is REF-back
+          model.model_class: 'lstm'
           dataset.td_prob: 0 
         kwargs:
-          trainer.learning_rate: 2.2e-4
+          trainer.learning_rate: 1e-4
     ```
 
-1. use `python -m workingmem --wandb.create_sweep` with the flag `--wandb.from_config [path/to/config]` to create individual experimental conditions. at this point, the library computes a cross-product over all possible conditions in your config and creates individual "sweeps" for each condition.
+1. modify it!
+   - try changing the number of layers a model has
+   - try specifying the task: change reference-back to N-back
+
+2. use `python -m workingmem --wandb.create_sweep` with the flag `--wandb.from_config example_config.yaml` to create individual experimental conditions. at this point, the library computes a cross-product over all possible conditions in your config and creates individual "sweeps" for each condition.
 
 ```mermaid
   flowchart LR
