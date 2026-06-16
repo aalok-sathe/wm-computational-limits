@@ -6,7 +6,7 @@ run as: `python -m workingmem [-h]`
 import logging
 import os
 
-from workingmem import _cli_entrypoint
+from workingmem.cli import entrypoint
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
@@ -17,4 +17,4 @@ _logger.setLevel(_LOGLEVEL)
 
 
 if __name__ == "__main__":
-    _cli_entrypoint()
+    entrypoint()
