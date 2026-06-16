@@ -91,15 +91,34 @@ flowchart LR
  
 
 ### Create your first experiment sweep
-1. identify manipulations of interest (see what variations the library already supports using `python -m workingmem -h`).
-2. write/modify a config defining experimental conditions ([example](./configs/sample_conditional_config))
-    - configs follow an "independent variables" and "conditional variables" format---independent variables are enumerated as lists
-      that yield a cross-product over all possible combinations of their variation. "conditional variables" are typically hyperparameters
-      that need to be looked up dependent on the particular condition.  
-3. use `python -m workingmem --wandb.create_sweep` along with the flag `--wandb.from_config [path/to/config]` to define individual experimental conditions.
-  at this point, the library evaluates a cross-product over all possible conditions in your experiment and creates individual
-  W&B "sweeps" for each condition. this enables separate tracking of the progress of experiments in a web browser, as well as unique-ID-based
-  retrieval after the experiment finishes for clean, reproducible science.
+1. Start with the example config:
+
+    [ `example_config.yaml` ](https://github.com/aalok-sathe/working-memory/blob/main/configs/sample_conditional_config.yaml):
+    ```
+    #### independent_variables
+    # this section contains a list of dictionaries, each containing 
+    #   key: [values]
+    # pairs. any independent variables that co-vary are grouped into a single dictionary whose values are the same length. a zip() over the values is used in the product between the values.
+    
+    independent_variables:
+      - dataset.td_prob: [0]
+      - dataset.role_n_congruence: [0]
+      - dataset.n_back: [3,4,5,6]
+        dataset.concurrent_reg: [3,4,5,6]
+      - model.model_class: ['rnn', 'lstm', 'transformer']
+
+    #### conditional variables
+    # they are looked-up based on matching index.  we go sequentially through the list of conditional variables and iterate over the index. for each (key, value) in the index we try to match the current instance of parameter combinations of independent variables. place the most narrowly-scoped index entries at the top of the list and the most general and widely-scoped index entries at the end. i.e., defaults, if any, should go at the very end. 
+
+    conditional_variables:
+      - index:
+          model.model_class: 'transformer'
+          dataset.td_prob: 0 
+        kwargs:
+          trainer.learning_rate: 2.2e-4
+    ```
+
+1. use `python -m workingmem --wandb.create_sweep` with the flag `--wandb.from_config [path/to/config]` to create individual experimental conditions. at this point, the library computes a cross-product over all possible conditions in your config and creates individual "sweeps" for each condition.
 
 ```mermaid
   flowchart LR
