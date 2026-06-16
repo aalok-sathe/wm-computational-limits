@@ -31,8 +31,8 @@ from workingmem.model import (
     TransformerModelWrapper,
     RNNModelWrapper,
     LSTMModelWrapper,
-    LSTMMultiCellWrapper,
-    RIMModelWrapper,
+    # LSTMMultiCellWrapper,
+    # RIMModelWrapper,
 )
 from workingmem.task import SIRDataset, SIRConfig, _T_dataset_or_collection_of_datasets
 from workingmem.utils import print_gpu_mem, wandbapi
@@ -294,10 +294,10 @@ def main(config: MainConfig):
         model = RNNModelWrapper(config.model)
     elif config.model.model_class == "lstm":
         model = LSTMModelWrapper(config.model)
-    elif config.model.model_class == "lstm_multi_cell":
-        model = LSTMMultiCellWrapper(config.model)
-    elif config.model.model_class == "rim":
-        model = RIMModelWrapper(config.model)
+    # elif config.model.model_class == "lstm_multi_cell":
+    #     model = LSTMMultiCellWrapper(config.model)
+    # elif config.model.model_class == "rim":
+    #     model = RIMModelWrapper(config.model)
     else:
         raise ValueError(f"unknown model class: {config.model.model_class}")
 
