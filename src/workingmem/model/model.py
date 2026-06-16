@@ -36,8 +36,8 @@ from workingmem.model.interface import (
 )
 
 
-logger = logging.getLogger("workingmem")
-logger.setLevel(logging.DEBUG)
+_logger = logging.getLogger("workingmem")
+_logger.setLevel(logging.DEBUG)
 
 
 class ModelWrapper(ABC):
@@ -91,10 +91,10 @@ class ModelWrapper(ABC):
 
         if config.from_pretrained is None:
             # if no pretrained path is supplied, we initialize the model from scratch
-            logger.info(f"initializing model from scratch with config: {config}")
+            _logger.info(f"initializing model from scratch with config: {config}")
             # set the seed for initializing the model weights
             if config.seed is not None:
-                logger.info(f"setting MODEL random seed to {config.seed}")
+                _logger.info(f"setting MODEL random seed to {config.seed}")
                 torch.manual_seed(int(config.seed))
                 np.random.seed(int(config.seed))
 
@@ -106,8 +106,8 @@ class ModelWrapper(ABC):
             # using the stored config rather than the supplied config
             # note that any passed options about model parameters will be ignored!
             # we should make sure the user is aware of this.
-            logger.warning(f"loading model from checkpoint: {config.from_pretrained}")
-            logger.warning(
+            _logger.warning(f"loading model from checkpoint: {config.from_pretrained}")
+            _logger.warning(
                 f"any additional options passed to `ModelConfig` will be ignored!\n\t{config}"
             )
             self.load_checkpoint(config.from_pretrained)
@@ -138,7 +138,7 @@ class ModelWrapper(ABC):
             # NOTE: this is unnecessary if this method was called from __init__ since the config
             # would have been set to the checkpoint dir already---that is the preferred way.
             self.config.from_pretrained = checkpoint_dir
-        logger.info(f"loaded config for pretrained model:\n\t{_config}")
+        _logger.info(f"loaded config for pretrained model:\n\t{_config}")
 
         # 2. load history
         with open(checkpoint_dir / "history.yaml", "r") as f:
@@ -172,10 +172,10 @@ class ModelWrapper(ABC):
 
         self.load_state_dict(_state_dict, _config)
 
-        logger.info(f"finished loading model state dict from {_state_dict_path}")
+        _logger.info(f"finished loading model state dict from {_state_dict_path}")
 
     def _rename_state_dict(self, sd):
-        logger.warning(
+        _logger.warning(
             f"returning state-dict as-is since {self.__class__} has provided no implementation"
         )
         return sd
@@ -238,7 +238,7 @@ class ModelWrapper(ABC):
         with open(history_path, "w") as f:
             yaml.dump([*map(convert_dataclass_if_needed, self.history)], f)
 
-        logger.info(f"saved model checkpoint to {checkpoint_path}")
+        _logger.info(f"saved model checkpoint to {checkpoint_path}")
 
     def _deactivate_positional_embeddings(self) -> None:
         """placeholder hunk for use by the TransformerModel subclass"""
@@ -302,25 +302,23 @@ class ModelWrapper(ABC):
         avg_acc = np.mean([entry["acc"] for entry in metrics])
         avg_macro_acc = np.mean([entry["macro_acc"] for entry in metrics])
 
-        wandb.log(
-            {
-                **dataclasses.asdict(state),
-                "step": state.step,
-                f"{log_prefix}_loss": avg_loss,
-                f"{log_prefix}_acc": avg_acc,
-                f"{log_prefix}_macro_acc": avg_macro_acc,
-                **{
-                    f"{entry['dataset']}_{log_prefix}_acc": entry["acc"]
-                    for entry in metrics
-                },
-                **{
-                    f"{entry['dataset']}_{log_prefix}_loss": entry["loss"]
-                    for entry in metrics
-                },
-            }
-        )
+        wandb.log({
+            **dataclasses.asdict(state),
+            "step": state.step,
+            f"{log_prefix}_loss": avg_loss,
+            f"{log_prefix}_acc": avg_acc,
+            f"{log_prefix}_macro_acc": avg_macro_acc,
+            **{
+                f"{entry['dataset']}_{log_prefix}_acc": entry["acc"]
+                for entry in metrics
+            },
+            **{
+                f"{entry['dataset']}_{log_prefix}_loss": entry["loss"]
+                for entry in metrics
+            },
+        })
 
-        logger.info(
+        _logger.info(
             f"{log_prefix.upper()}: {state.epoch = } {avg_loss = :.3f}, {avg_acc = :.3f}, {avg_macro_acc = :.3f}"
         )
 
@@ -404,14 +402,10 @@ class ModelWrapper(ABC):
                 )
                 dataloaders = [
                     DataLoader(
-                        ConcatDataset(
-                            [
-                                Subset(
-                                    d, indices=np.arange(0, len(d) // len(dataset) + 1)
-                                )
-                                for d in dataset
-                            ]
-                        ),
+                        ConcatDataset([
+                            Subset(d, indices=np.arange(0, len(d) // len(dataset) + 1))
+                            for d in dataset
+                        ]),
                         batch_size=training_config.batch_size,
                         num_workers=1,
                         shuffle=True,  # shuffle=True makes the data shuffled within block but NOT interleaved
@@ -553,7 +547,7 @@ class ModelWrapper(ABC):
 
             for state.epoch_step, inputs in enumerate(train_dataloader):
                 if state.best_val_acc >= 0.999:
-                    logger.warning(
+                    _logger.warning(
                         f"best validation accuracy {state.best_val_acc:.3f} reached, skipping training loop to directly evaluate the model"
                     )
                 else:
@@ -650,7 +644,7 @@ class ModelWrapper(ABC):
 
                 state.cumAUC += eval_acc * 1
 
-                logger.info(
+                _logger.info(
                     f"EVAL: {state.epoch = } {eval_loss = }, {eval_acc = }, {test_loss = }, {test_acc = }"
                 )
 
@@ -668,11 +662,11 @@ class ModelWrapper(ABC):
                         # "cumAUC_normalized": state.cumAUC / state.epoch,
                     }
                 )
-                logger.debug(f"{wandb_logged = }")
+                _logger.debug(f"{wandb_logged = }")
 
                 # check if we had an improvement in validation loss
                 if eval_loss < state.best_val_loss:
-                    logger.info(
+                    _logger.info(
                         f"found new best validation loss: {eval_loss} < {state.best_val_loss}"
                     )
                     state.best_val_loss = eval_loss
@@ -726,16 +720,14 @@ class ModelWrapper(ABC):
                 mask_answer_tokens=training_config.mask_answer_tokens,
             )
 
-            logger.info(f"TEST: {test_loss = }, {test_acc = }, {test_macro_acc = }")
-            wandb.log(
-                {
-                    "epoch": state.epoch,
-                    "test_loss": test_loss,
-                    "test_acc": test_acc,
-                    "test_macro_acc": test_macro_acc,
-                    "test_predictions": test_table,
-                }
-            )
+            _logger.info(f"TEST: {test_loss = }, {test_acc = }, {test_macro_acc = }")
+            wandb.log({
+                "epoch": state.epoch,
+                "test_loss": test_loss,
+                "test_acc": test_acc,
+                "test_macro_acc": test_macro_acc,
+                "test_predictions": test_table,
+            })
 
     def test(
         self,
@@ -772,7 +764,7 @@ class ModelWrapper(ABC):
             the epoch number of the training run that made a call to the evaluation run
         """
 
-        logger.info("evaluating model")
+        _logger.info("evaluating model")
         self.model.eval()
 
         eval_dataloader = DataLoader(
@@ -845,8 +837,8 @@ class ModelWrapper(ABC):
         )
         acc = np.mean(predictions[:, WARMUP_STEPS:] == actual_labels[:, WARMUP_STEPS:])
 
-        logger.info(f"percent trials correct for dataset {dataset}: {acc:.5f}")
-        logger.info(
+        _logger.info(f"percent trials correct for dataset {dataset}: {acc:.5f}")
+        _logger.info(
             f"# sequences correct for dataset {dataset}: {eval_num_correct} / {len(actual_labels)}"
         )
 
@@ -895,11 +887,11 @@ class ModelWrapper(ABC):
         )  # only the relevant token_ids remain non-zeroed-out as `answers`
 
         if mask_answer_tokens:
-            logger.debug(
+            _logger.debug(
                 f"removing answer tokens from input: {inputs['token_ids'].gt(0).sum() = }"
             )
             inputs["token_ids"] = inputs["token_ids"] * (1 - inputs["answer_locations"])
-            logger.debug(
+            _logger.debug(
                 f"\tAFTER removing answer tokens from input: {inputs['token_ids'].gt(0).sum() = }"
             )
 
@@ -917,11 +909,11 @@ class ModelWrapper(ABC):
                 outputs["gathered_labels"],
             )
 
-            logger.debug(f"{loss.shape = }, {inputs['token_ids'].shape = }")
-            logger.debug(
+            _logger.debug(f"{loss.shape = }, {inputs['token_ids'].shape = }")
+            _logger.debug(
                 f"{gathered_answers.shape = }, {inputs['answer_locations'].shape = }"
             )
-            logger.debug(
+            _logger.debug(
                 f"{gathered_logits.shape = }, {gathered_answers.shape = }, {gathered_labels.shape = }"
             )
 
@@ -1041,26 +1033,24 @@ class RNNModelWrapper(ModelWrapper):
         """
         embed_label, main_label, unembed_label = self._get_nn_sequential_block_labels()
         self.model = torch.nn.Sequential(
-            OrderedDict(
-                [
-                    (embed_label, torch.nn.Embedding(config.d_vocab, config.d_model)),
-                    (
-                        main_label,
-                        self._forward_overridden_RNN(
-                            input_size=config.d_model,
-                            hidden_size=config.d_hidden,
-                            num_layers=config.n_layers,
-                            batch_first=True,
-                            nonlinearity=config.act_fn,
-                            bidirectional=False,
-                        ),
+            OrderedDict([
+                (embed_label, torch.nn.Embedding(config.d_vocab, config.d_model)),
+                (
+                    main_label,
+                    self._forward_overridden_RNN(
+                        input_size=config.d_model,
+                        hidden_size=config.d_hidden,
+                        num_layers=config.n_layers,
+                        batch_first=True,
+                        nonlinearity=config.act_fn,
+                        bidirectional=False,
                     ),
-                    (
-                        unembed_label,
-                        torch.nn.Linear(config.d_hidden, config.d_vocab),
-                    ),
-                ]
-            )
+                ),
+                (
+                    unembed_label,
+                    torch.nn.Linear(config.d_hidden, config.d_vocab),
+                ),
+            ])
         )
 
     def get_representations_over_sequence(
@@ -1172,25 +1162,23 @@ class LSTMModelWrapper(RNNModelWrapper):
         """
 
         self.model = torch.nn.Sequential(
-            OrderedDict(
-                [
-                    ("embed", torch.nn.Embedding(config.d_vocab, config.d_model)),
-                    (
-                        "lstm",
-                        self._forward_overridden_RNN(
-                            input_size=config.d_model,
-                            hidden_size=config.d_hidden,
-                            num_layers=config.n_layers,
-                            batch_first=True,
-                            bidirectional=False,
-                        ),
+            OrderedDict([
+                ("embed", torch.nn.Embedding(config.d_vocab, config.d_model)),
+                (
+                    "lstm",
+                    self._forward_overridden_RNN(
+                        input_size=config.d_model,
+                        hidden_size=config.d_hidden,
+                        num_layers=config.n_layers,
+                        batch_first=True,
+                        bidirectional=False,
                     ),
-                    (
-                        "unembed",
-                        torch.nn.Linear(config.d_hidden, config.d_vocab),
-                    ),
-                ]
-            )
+                ),
+                (
+                    "unembed",
+                    torch.nn.Linear(config.d_hidden, config.d_vocab),
+                ),
+            ])
         )
 
     @classmethod
