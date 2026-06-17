@@ -307,16 +307,15 @@ class SIRDataset(GeneratedCachedDataset):
 
     def generate_trial_sequence(
         self,
-        mode=None,  # 'train' | 'challenge' | None
+        mode: typing.Literal["train", "challenge", None] = None,
     ) -> dict:
         """
         Generates a sequence of `seq_len` trials for the SIR task
-        ---
-        mode: str = 'train' | 'challenge' | None (default)
-            - 'train' mode uses the full set of registers and items minus held-out register-symbol pairs
-            - 'challenge' mode uses the held-out registers and items
-            - None disregards any consideration of register-item combinations and uses the full set of registers
-              and items
+
+        - 'train' mode uses the full set of roles and items minus held-out role-symbol pairs (formerly 'registers')
+        - 'challenge' mode uses the held-out registers and items
+        - None disregards any consideration of register-item combinations and uses the full set of registers
+        and items
 
         key things to remember:
         1. we have n_reg registers and n_items items in total, but not all of them are
@@ -332,8 +331,8 @@ class SIRDataset(GeneratedCachedDataset):
            in practice, this means, picking a start_idx uniformly from the range [0, n_reg) with
            wraparound, and picking registers uniformly without replacement from this range
 
-        algorithm
-        +-------+
+        **algorithm**
+        ```
         +--------- (this happens once at the level of the trial seq) -----+
         | 1. pick a start_idx uniformly at random from the range [0, n_reg)
         |     (start_idx exists to serve a case where locality is not None: when registers
@@ -370,6 +369,7 @@ class SIRDataset(GeneratedCachedDataset):
         |    +----------------------------------------------------------------+
         |
         +
+        ```
 
         """
         store = SIRTokenizer.instructions.store
