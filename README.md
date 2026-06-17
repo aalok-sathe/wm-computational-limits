@@ -7,6 +7,7 @@
   - [Options: applicable to config and CLI](#options-applicable-to-config-and-cli)
 - [Install](#install)
 - [References](#references)
+- [Citing](#citing)
 
 ## Introduction
 The [`swim`](https://github.com/aalok-sathe/working-memory) computational modeling framework serves to enable computational simulations of working memory tasks. 
@@ -114,6 +115,7 @@ swim [OR: python -m workingmem]
 
 
 
+
 ## References
 - Rac-Lubashevsky, R., & Kessler, Y. (2016). [Dissociating working memory updating and automatic updating: The reference-back paradigm.](https://doi.org/10.1037/xlm0000219) *Journal of Experimental Psychology: Learning, Memory, and Cognition, 42*(6), 951–969. 
   <emph> <b>Comment:</b> The *Reference-back* task is introduced as a way to decompose and separately study role-addressable gating primitives. </emph> 
@@ -123,6 +125,17 @@ swim [OR: python -m workingmem]
 - Soni*, A., Traylor*, A., Merullo, J., Frank, M. J., & Pavlick, E. (2026).  [Transformer Mechanisms Mimic Frontostriatal Gating Operations When Trained on Human Working Memory Tasks](https://ski.clps.brown.edu/papers/Soni_transformerWM.pdf). *preprint*.
   <emph> <b>Comment:</b> Authors in the above two works investigate the transformer neural network architecture trained on the reference-back task to find dissociable gating operations through causal interventions. </emph>
 
+## Citing
+> Sathe, A. (2026). `sWiM`: simulation of working memory management with neural networks. *Retrieved from https://github.com/aalok-sathe/working-memory*.
+
+```bibtex
+@software{Sathe_workingmemory,
+  author = {Sathe, Aalok},
+  title = {{sWiM: simulation of working memory management with neural networks}},
+  url = {https://github.com/aalok-sathe/working-memory/},
+  year = {2026}
+}
+```
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Comic+Neue:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap');
