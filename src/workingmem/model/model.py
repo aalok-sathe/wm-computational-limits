@@ -66,7 +66,7 @@ class ModelWrapper(ABC):
         self.model.load_state_dict(state_dict)
 
     @classmethod
-    def from_checkpoint_dir(cls, ckpt_dir) -> Self:
+    def from_checkpoint_dir(cls, ckpt_dir, epoch=None) -> Self:
         """
         similar to `ModelWrapper.load_checkpoint` except does not
         already require an initialized model and config---reads in the model
@@ -82,7 +82,7 @@ class ModelWrapper(ABC):
         config = ModelConfig(**config)
 
         model = cls(config)
-        model.load_checkpoint(ckpt_dir)
+        model.load_checkpoint(ckpt_dir, epoch=epoch)
         return model
 
     def __init__(self, config: ModelConfig):
@@ -117,7 +117,7 @@ class ModelWrapper(ABC):
             self.history = []
         self.model.to(self.device)
 
-    def load_checkpoint(self, checkpoint_dir: typing.Union[str, Path]):
+    def load_checkpoint(self, checkpoint_dir: typing.Union[str, Path], epoch=None):
         """
         `checkpoint_dir` points to a directory containing:
         - `config.yaml` which contains the `ModelConfig`
@@ -151,12 +151,22 @@ class ModelWrapper(ABC):
         # TODO: may be worth supporting state dicts other than `best_model.pth`,
         ################################################################
         # e.g. `epoch_{epoch}.pth` for taking a model trained for X epochs
-        _state_dict_path = list(checkpoint_dir.glob("*.pth"))
-        if len(_state_dict_path) != 1:
-            raise ValueError(
-                f"expected exactly one .pth file in {checkpoint_dir}, found {_state_dict_path}"
-            )
-        [_state_dict_path] = _state_dict_path
+        if epoch is not None:
+            _state_dict_path = checkpoint_dir / "checkpoints" / f"epoch_{epoch}.pth"
+            _logger.info(f"loading model state dict from {_state_dict_path}")
+            if not _state_dict_path.exists():
+                raise ValueError(
+                    f"expected to find a .pth file at {_state_dict_path} but it does not exist"
+                )
+
+        else:
+            _state_dict_path = list(checkpoint_dir.glob("*.pth"))
+            _logger.info(f"loading model state dict from {_state_dict_path}")
+            if len(_state_dict_path) != 1:
+                raise ValueError(
+                    f"expected exactly one .pth file in {checkpoint_dir}, found: {_state_dict_path}"
+                )
+            [_state_dict_path] = _state_dict_path
         # vocab_path = os.path.join(root_dir, d, "vocab.json")
 
         # 3.2 initialize a model instance just based on the config (this will have

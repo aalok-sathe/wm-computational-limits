@@ -313,7 +313,7 @@ def annotate_trial_seq(
     return pd.DataFrame(annotated_seq)
 
 
-def load_model_and_dataset(ckpt_path, split="test"):
+def load_model_and_dataset(ckpt_path, split="test", epoch=None):
     """
     given a checkpoint path, load the model and the corresponding dataset it was most
     recently trained on. we can infer the model class from the config.yaml file
@@ -339,7 +339,7 @@ def load_model_and_dataset(ckpt_path, split="test"):
     elif model_class == "transformer":
         model_class = TransformerModelWrapper
 
-    model = model_class.from_checkpoint_dir(ckpt_path)
+    model = model_class.from_checkpoint_dir(ckpt_path, epoch=epoch)
 
     # also load the dataset corresponding to the model which is specified in the model's history.yaml file
     hist = yaml.load(
