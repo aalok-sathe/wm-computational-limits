@@ -17,8 +17,8 @@ import torch
 # local
 # from workingmem.task.interface import GeneratedCachedDataset
 
-logger = logging.getLogger("workingmem")
-logger.setLevel(logging.DEBUG)
+_logger = logging.getLogger("workingmem")
+_logger.setLevel(logging.DEBUG)
 
 
 @dataclasses.dataclass
@@ -34,11 +34,15 @@ class ModelConfig:
     from_pretrained: typing.Union[str, None] = None
     """`from_pretrained` is a path to a directory containing the model checkpoints and config.yaml.
         typically:
+        '''
+        |
         +-- config.yaml
         +-- history.yaml
         +-- checkpoints/{epoch}.pth, ...
-        +-- best_model.pth 
-    if supplied, any options in the existing `ModelConfig` are ignored.  model is initialized using the config in the config.yaml file, and the state_dict is loaded from the *.pth file.  
+        +-- best_model.pth
+        ''' 
+    if supplied, any options in the passed `ModelConfig` instance are ignored.  model is initialized
+    using the config in the config.yaml file, and the state_dict is loaded from the *.pth file.  
     """
 
     n_layers: int = 2
@@ -219,7 +223,7 @@ def compute_masked_loss(
     # logits have the shape (b, seq_len, |V|)
     b, seq_len, vocab_size = logits.shape
 
-    # logger.debug(f"{logits.shape = }, {inputs['token_ids'].shape = }")
+    # _logger.debug(f"{logits.shape = }, {inputs['token_ids'].shape = }")
     gathered_logits = logits[
         :, inputs["answer_locations"][0].nonzero(as_tuple=True)[0] - 1, :
     ]
@@ -232,7 +236,7 @@ def compute_masked_loss(
     # tensor by a randomly-generated mask, since each item in the mask is iid. for answer locations that
     # are zero already, nothing will change.
     if sparsity > 0.9:
-        logger.warning(f"{sparsity = :.2f} is high")
+        _logger.warning(f"{sparsity = :.2f} is high")
         if sparsity >= 0.99:
             raise ValueError(
                 f"{sparsity = } is too high. sparsity=1 corresponds to no feedback"
@@ -243,10 +247,10 @@ def compute_masked_loss(
     )
     sparsity_mask.requires_grad = False
 
-    logger.debug(
+    _logger.debug(
         f"in COMPUTE_MASKED_LOSS: {gathered_logits.shape = }, {gathered_labels.shape = }, {sparsity_mask.shape = }"
     )
-    # logger.debug(gathered_answers)
+    # _logger.debug(gathered_answers)
 
     # return shape: (b, seq_len)
     loss = torch.nn.functional.cross_entropy(
@@ -259,24 +263,24 @@ def compute_masked_loss(
         reduction="none",
     )
 
-    logger.debug(f"{loss.shape = } {loss.greater(0).sum() = }. applying mask")
+    _logger.debug(f"{loss.shape = } {loss.greater(0).sum() = }. applying mask")
     # apply sparsity mask to the loss to zero-out the loss at the locations dropped by sparsity computation
     # this is done by multiplying the loss by the sparsity mask, which is 1
     # at the locations we want to keep and 0 at the locations we want to drop
     old_loss = loss.mean()  # / gathered_labels.shape[0]  # average over the batch size
     loss = loss * sparsity_mask
-    logger.debug(
+    _logger.debug(
         f"\tAFTER {loss.shape = } {loss.greater(0).sum() = }. AFTER applying mask"
     )
     loss = loss.mean()  # / gathered_labels.shape[0]  # average over the batch size
-    logger.debug(
+    _logger.debug(
         f"old loss: {old_loss.item():.3f}, new loss after applying sparsity: {loss.item()}"
     )
     # at this point, our loss magnitude is smaller (rescaled by `sparsity` compared to the original loss)
     # if we want it to be comparable, we can rescale it back up by 1 / (1 - sparsity)
     if rescale_loss:
         loss /= 1 - sparsity
-        logger.debug(f"new loss after rescaling: {loss.item()}")
+        _logger.debug(f"new loss after rescaling: {loss.item()}")
 
     if return_outputs:
         return dict(

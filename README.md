@@ -7,9 +7,10 @@
   - [Options: applicable to config and CLI](#options-applicable-to-config-and-cli)
 - [Install](#install)
 - [References](#references)
+- [Citing](#citing)
 
 ## Introduction
-The [`swim`](https://aalok-sathe.github.io/working-memory) computational modeling framework serves to enable computational simulations of working memory tasks. 
+The [`swim`](https://github.com/aalok-sathe/working-memory) computational modeling framework serves to enable computational simulations of working memory tasks. 
 A robustly-engineered framework allows researchers to define their own tasks and
 generate datasets with fine control over the parameters of those tasks. The
 framework allows for training neural models in an architecture-agnostic manner,
@@ -103,12 +104,9 @@ swim [OR: python -m workingmem]
 1. **install `sWiM`**
       - `uv sync` in the project root directory (this is the directory where the `pyproject.toml` file lives): install the python virtual environment with all requisite packages (needed once)
       - `. ./.venv/bin/activate`: activate the virtual environment in the directory of the library---execute this also from the project root directory, where the `pyproject.toml` file lives.
-      (needed each time you log in to your computer or compute node until you exit/log out of that session)
-    
+      (needed each time you log in to your computer or compute node until you exit/log out of that session). [see the tutorial section on creating a virtual environment](https://aalok-sathe.github.io/working-memory/workingmem.html#creating-and-using-the-virtual-environment-using-uv).
 
-
-
-3. **use with Weights and Biases (recommended)**
+1. **use with Weights and Biases (recommended)**
     - `sWiM` is best used alongside weights and biases. for this you will have to [create an account](https://wandb.ai). there are many ways in which to do so, including using your existing github account.
     it's possible to use `sWiM` without a W&B integration at the
     cost of full functionality (W&B is mainly used as a database for creating and orchestrating experiments on top of the core `sWiM` framework; you can still call `sWiM` and train/evaluate models just the same via CLI or a programmatic interface when imported as a library.)
@@ -117,10 +115,39 @@ swim [OR: python -m workingmem]
 
 
 
+
 ## References
 - Rac-Lubashevsky, R., & Kessler, Y. (2016). [Dissociating working memory updating and automatic updating: The reference-back paradigm.](https://doi.org/10.1037/xlm0000219) *Journal of Experimental Psychology: Learning, Memory, and Cognition, 42*(6), 951–969. 
+  <emph> <b>Comment:</b> The *Reference-back* task is introduced as a way to decompose and separately study role-addressable gating primitives. </emph> 
 - O’Reilly, R. C., & Frank, M. J. (2006). [Making Working Memory Work: A Computational Model of Learning in the Prefrontal Cortex and Basal Ganglia.](https://doi.org/10.1162/089976606775093909) *Neural Computation, 18*(2), 283–328. 
+  <emph> <b>Comment:</b> The PFC-BG working memory (PBWM) model of WM management is proposed in this paper; the authors construct a biologically-informed model of the prefrontal-cortex and basal ganglia structures and how they learn and are able to solve WM management. </emph>
+- Traylor, A., Merullo, J., Frank, M. J., & Pavlick, E. (2024). [Transformer Mechanisms Mimic Frontostriatal Gating Operations When Trained on Human Working Memory Tasks](https://escholarship.org/uc/item/7z52s314). *Proceedings of the Annual Meeting of the Cognitive Science Society, 46*(0). 
+- Soni*, A., Traylor*, A., Merullo, J., Frank, M. J., & Pavlick, E. (2026).  [Transformer Mechanisms Mimic Frontostriatal Gating Operations When Trained on Human Working Memory Tasks](https://ski.clps.brown.edu/papers/Soni_transformerWM.pdf). *preprint*.
+  <emph> <b>Comment:</b> Authors in the above two works investigate the transformer neural network architecture trained on the reference-back task to find dissociable gating operations through causal interventions. </emph>
+
+## Citing
+> Sathe, A. (2026). `sWiM`: simulation of working memory management with neural networks. *Retrieved from https://github.com/aalok-sathe/working-memory*.
+
+```bibtex
+@software{Sathe_workingmemory,
+  author = {Sathe, Aalok},
+  title = {{sWiM: simulation of working memory management with neural networks}},
+  url = {https://github.com/aalok-sathe/working-memory/},
+  year = {2026}
+}
+```
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Comic+Neue:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap');
 
 
-
-
+emph {
+  /* background-color: #2b2a2a; */
+  padding: 2px 4px;
+  border-radius: 4px;
+  /* font-family: 'Courier New', monospace; */
+  font-family: "Comic Neue", cursive;
+  font-size: 0.9em;
+  color: #d480af;
+}
+</style>
