@@ -31,7 +31,7 @@ from workingmem.model import (
     TransformerModelWrapper,
     RNNModelWrapper,
     LSTMModelWrapper,
-    # LSTMMultiCellWrapper,
+    LSTMMultiCellWrapper,
     # RIMModelWrapper,
 )
 from workingmem.task import SIRDataset, SIRConfig, _T_dataset_or_collection_of_datasets
@@ -294,8 +294,8 @@ def main(config: MainConfig):
         model = RNNModelWrapper(config.model)
     elif config.model.model_class == "lstm":
         model = LSTMModelWrapper(config.model)
-    # elif config.model.model_class == "lstm_multi_cell":
-    #     model = LSTMMultiCellWrapper(config.model)
+    elif config.model.model_class == "lstm_multicell":
+        model = LSTMMultiCellWrapper(config.model)
     # elif config.model.model_class == "rim":
     #     model = RIMModelWrapper(config.model)
     else:
