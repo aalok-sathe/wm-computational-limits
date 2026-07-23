@@ -328,6 +328,7 @@ def load_model_and_dataset(ckpt_path, split="test", epoch=None):
 
     from workingmem.model import (
         LSTMModelWrapper,
+        LSTMMultiCellWrapper,
         RNNModelWrapper,
         TransformerModelWrapper,
     )
@@ -339,10 +340,14 @@ def load_model_and_dataset(ckpt_path, split="test", epoch=None):
     model_class = model_config["model_class"]
     if model_class == "lstm":
         model_class = LSTMModelWrapper
+    elif model_class == "lstm_multicell":
+        model_class = LSTMMultiCellWrapper
     elif model_class == "rnn":
         model_class = RNNModelWrapper
     elif model_class == "transformer":
         model_class = TransformerModelWrapper
+    else:
+        raise ValueError(f"Unknown model class: {model_class}")
 
     model = model_class.from_checkpoint_dir(ckpt_path, epoch=epoch)
 

@@ -1337,7 +1337,10 @@ class LSTMMultiCell(torch.nn.Module):
             output: Merged output tensor
             (h_n, c_n): Merged final hidden and cell states
         """
-        batch_size, seq_len, input_size = input.shape
+        try:
+            batch_size, seq_len, _ = input.shape
+        except ValueError:
+            batch_size, seq_len, _ = [1, *input.shape]
 
         if hx is None:
             hx = [
