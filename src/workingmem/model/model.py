@@ -1468,7 +1468,17 @@ class LSTMMultiCellWrapper(RNNModelWrapper):
                         merge_strategy=lstm_merge_strategy,
                     ),
                 ),
-                ("unembed", torch.nn.Linear(config.d_hidden, config.d_vocab)),
+                (
+                    "unembed",
+                    torch.nn.Linear(
+                        (
+                            (config.d_hidden * num_lstm_cells)
+                            if lstm_merge_strategy == "concatenate"
+                            else config.d_hidden
+                        ),
+                        config.d_vocab,
+                    ),
+                ),
             ])
         )
 
