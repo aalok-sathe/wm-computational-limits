@@ -103,6 +103,8 @@ class MainConfig:
     # between them for each condition we construct
     gpu_partition_names: tuple = (
         "3090-gcondo",
+        "3090-gcondo",
+        # "gpu",
         "gpu-he --account=carney-frankmj-condo2",
     )
 
