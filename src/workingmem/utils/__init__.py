@@ -1,19 +1,17 @@
-#!/bin/bash
-from pandas.core.frame import DataFrame
-
-from itertools import product
-from collections import defaultdict
-
-import typing
-from functools import lru_cache
 import logging
+import typing
+from collections import defaultdict
+from functools import lru_cache
+from itertools import product
 from pathlib import Path
 
-import yaml
 import pandas as pd
+import yaml
+from pandas.core.frame import DataFrame
 from tqdm.auto import tqdm
+
 import wandb
-import dacite
+import workingmem.utils.plotting as plotting
 
 
 logging.basicConfig(
@@ -83,7 +81,7 @@ def _get_wandb_runs(
     as were included in the config sent to wandb to initialize the run. does not extensively
     catalog all the default parameters
     """
-    from workingmem import MainConfig, ModelConfig, TrainingConfig, SIRConfig
+    from workingmem import MainConfig, ModelConfig, SIRConfig, TrainingConfig
 
     runs = wandbapi.sweep(f"{prefix}/{project_name}/{sweep_id}").runs
     dfs = []
@@ -124,7 +122,13 @@ def _get_wandb_runs(
             )
             pass
 
-    df = pd.concat(dfs).reset_index(drop=True)
+    try:
+        df = pd.concat(dfs).reset_index(drop=True)
+    except ValueError as e:
+        if "No objects to concatenate" in str(e):
+            # skip due to no completed runs
+            _logger.warning(f"skipping sweep {sweep_id} due to no completed runs: {e}")
+            return DataFrame()
     return df
 
 
@@ -321,8 +325,10 @@ def load_model_and_dataset(ckpt_path, split="test", epoch=None):
     history.yaml file in the checkpoint directory.
     """
     import torch
+
     from workingmem.model import (
         LSTMModelWrapper,
+        LSTMMultiCellWrapper,
         RNNModelWrapper,
         TransformerModelWrapper,
     )
@@ -334,10 +340,14 @@ def load_model_and_dataset(ckpt_path, split="test", epoch=None):
     model_class = model_config["model_class"]
     if model_class == "lstm":
         model_class = LSTMModelWrapper
+    elif model_class == "lstm_multicell":
+        model_class = LSTMMultiCellWrapper
     elif model_class == "rnn":
         model_class = RNNModelWrapper
     elif model_class == "transformer":
         model_class = TransformerModelWrapper
+    else:
+        raise ValueError(f"Unknown model class: {model_class}")
 
     model = model_class.from_checkpoint_dir(ckpt_path, epoch=epoch)
 
